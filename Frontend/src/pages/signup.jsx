@@ -1,19 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './signup.css';
+import { API_URL } from '../config';   // ✅ FIX: use central config, not localhost
 
-import img1 from './interview1.jpg';
-import img2 from './interview2.jpg';
-import img3 from './interview3.jpg';
-import img4 from './interview4.jpg';
 import img5 from './interview5.jpg';
 import img6 from './interview6.jpg';
 import img7 from './interview7.jpg';
 import img8 from './interview8.jpg';
-import img9 from './interview9.jpg';
-import img10 from './interview10.jpg';
 
-const images = [  img5,img6, img7, img8];
+const images = [img5, img6, img7, img8];
 
 const Signup = () => {
   const [form, setForm] = useState({ name: '', email: '', password: '', skills: '' });
@@ -22,13 +17,10 @@ const Signup = () => {
   const navigate = useNavigate();
 
   useEffect(() => {
-   
-   
-    const lastIndex = parseInt(localStorage.getItem('lastImageIndex') || '0',5);
+    const lastIndex = parseInt(localStorage.getItem('lastImageIndex') || '0', 10);
     const nextIndex = (lastIndex + 1) % images.length;
     setCurrentImageIndex(nextIndex);
-    localStorage.setItem('lastImageIndex', nextIndex);
-    
+    localStorage.setItem('lastImageIndex', String(nextIndex));
   }, []);
 
   const handleChange = (e) => {
@@ -37,16 +29,33 @@ const Signup = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setError(null);
+
+    // Skills: send as array to match FastAPI schema
+    const payload = {
+      ...form,
+      skills: form.skills.split(',').map((s) => s.trim()).filter(Boolean),
+    };
+
     try {
-      const res = await fetch('http://localhost:8080/api/auth/signup',  {
+      const res = await fetch(`${API_URL}/api/auth/signup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form)
+        body: JSON.stringify(payload),
       });
+
       const data = await res.json();
-      if (!res.ok) throw new Error(data.msg);
+
+      if (!res.ok) {
+        // ✅ FIX: FastAPI returns "detail", not "msg"
+        throw new Error(data.detail || 'Signup failed');
+      }
+
+      // ✅ FIX: Save both token AND userId (needed for slot delete ownership check)
       localStorage.setItem('token', data.token);
-      navigate('/');
+      localStorage.setItem('userId', data.user.id);
+
+      navigate('/slots/available');
     } catch (err) {
       setError(err.message);
     }
@@ -55,27 +64,23 @@ const Signup = () => {
   return (
     <div className="signup-container">
       <header className="signup-header">"Sharpen your skills with prep4Sde!"</header>
+
       <div className="signup-main">
         <div className="signup-image">
           <img
             src={images[currentImageIndex]}
             alt="Slideshow"
-            style={{
-              width: '100%',
-              height: 'auto',
-              borderRadius: '10px',
-              transition: 'opacity 0.5s ease-in-out'
-            }}
+            style={{ width: '100%', height: 'auto', borderRadius: '10px', transition: 'opacity 0.5s ease-in-out' }}
           />
         </div>
 
         <div className="signup-form-container">
           <h1 className="signup-title">prep4Sde</h1>
           <form className="signup-form" onSubmit={handleSubmit}>
-            <input type="text" name="name" placeholder="Name" onChange={handleChange} required />
-            <input type="email" name="email" placeholder="Email" onChange={handleChange} required />
-            <input type="password" name="password" placeholder="Password" onChange={handleChange} required />
-            <input type="text" name="skills" placeholder="Skills (comma separated)" onChange={handleChange} required />
+            <input type="text"     name="name"     placeholder="Name"                          onChange={handleChange} required />
+            <input type="email"    name="email"    placeholder="Email"                         onChange={handleChange} required />
+            <input type="password" name="password" placeholder="Password"                      onChange={handleChange} required />
+            <input type="text"     name="skills"   placeholder="Skills (comma separated)"      onChange={handleChange} required />
             {error && <p style={{ color: 'red', fontSize: '13px' }}>{error}</p>}
             <button type="submit">Sign Up</button>
           </form>
@@ -84,6 +89,7 @@ const Signup = () => {
           </p>
         </div>
       </div>
+
       <footer className="signup-footer">
         <a href="#">Privacy Policy</a>
         <a href="#">Terms</a>

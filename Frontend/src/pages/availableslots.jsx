@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { API_URL } from '../config';   // ✅ FIX: central config
 import './availableslots.css';
 
 const SlotsPage = () => {
@@ -18,17 +19,19 @@ const SlotsPage = () => {
       setLoading(true);
       setMessage('');
 
+      // ✅ FIX: use API_URL, not hardcoded render URL
       const url = showBooked
-        ? 'https://interview-prep-platform-07wl.onrender.com/api/slots/booked'
-        : 'https://interview-prep-platform-07wl.onrender.com/api/slots/available';
+        ? `${API_URL}/api/slots/booked`
+        : `${API_URL}/api/slots/available`;
 
       const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
 
       if (!res.ok) {
-        setMessage(data.msg || 'Failed to fetch slots');
+        // ✅ FIX: FastAPI error key is "detail", not "msg"
+        setMessage(data.detail || 'Failed to fetch slots');
         setSlots([]);
         return;
       }
@@ -44,22 +47,18 @@ const SlotsPage = () => {
 
   useEffect(() => {
     fetchSlots();
-  }, [showBooked]);
+  }, [showBooked]);   // re-fetches whenever toggle changes
 
   const handleBook = async (slotId) => {
     try {
-      const res = await fetch(
-        `https://interview-prep-platform-07wl.onrender.com/api/slots/book/${slotId}`,
-        {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}` }
-        }
-      );
+      const res = await fetch(`${API_URL}/api/slots/book/${slotId}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
 
       const data = await res.json();
-
       if (!res.ok) {
-        setMessage(data.msg || 'Failed to book slot');
+        setMessage(data.detail || 'Failed to book slot');
         return;
       }
 
@@ -74,18 +73,14 @@ const SlotsPage = () => {
     if (!window.confirm('Are you sure you want to delete this slot?')) return;
 
     try {
-      const res = await fetch(
-        `https://interview-prep-platform-07wl.onrender.com/api/slots/cancel/${slotId}`,
-        {
-          method: 'DELETE',
-          headers: { Authorization: `Bearer ${token}` }
-        }
-      );
+      const res = await fetch(`${API_URL}/api/slots/cancel/${slotId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
 
       const data = await res.json();
-
       if (!res.ok) {
-        setMessage(data.msg || 'Failed to delete slot');
+        setMessage(data.detail || 'Failed to delete slot');
         return;
       }
 
@@ -97,44 +92,31 @@ const SlotsPage = () => {
   };
 
   const handleCreateSlot = async () => {
-    const startTimeInput = prompt(
-      'Enter start time (YYYY-MM-DDTHH:mm, e.g., 2025-07-09T12:00)'
-    );
+    const startTimeInput = prompt('Enter start time (YYYY-MM-DDTHH:mm, e.g., 2025-07-09T12:00)');
     const duration = prompt('Enter duration in minutes (e.g., 60)');
-    const skillsInput = prompt(
-      'Enter skills required (comma separated, e.g., React,Node)'
-    );
+    const skillsInput = prompt('Enter skills required (comma separated, e.g., React,Node)');
 
     if (!startTimeInput || !duration || !skillsInput) {
       setMessage('All fields are required to create a slot.');
       return;
     }
 
-    // ✅ Convert to UTC ISO before sending
     const startTime = new Date(startTimeInput).toISOString();
     const skills = skillsInput.split(',').map((s) => s.trim());
 
     try {
-      const res = await fetch(
-        `https://interview-prep-platform-07wl.onrender.com/api/slots/create`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`
-          },
-          body: JSON.stringify({
-            startTime,
-            duration: parseInt(duration),
-            skills
-          })
-        }
-      );
+      const res = await fetch(`${API_URL}/api/slots/create`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ startTime, duration: parseInt(duration), skills }),
+      });
 
       const data = await res.json();
-
       if (!res.ok) {
-        setMessage(data.msg || 'Failed to create slot');
+        setMessage(data.detail || 'Failed to create slot');
         return;
       }
 
@@ -151,7 +133,11 @@ const SlotsPage = () => {
     navigate('/login');
   };
 
-  // ✅ Always display in IST
+  // ✅ FIX: toggle state directly instead of navigating to different routes
+  const handleToggle = () => {
+    setShowBooked((prev) => !prev);
+  };
+
   const formatDateTime = (dateString) => {
     return new Date(dateString).toLocaleString('en-IN', {
       timeZone: 'Asia/Kolkata',
@@ -169,10 +155,8 @@ const SlotsPage = () => {
       )}
 
       <div className="controls">
-        <button
-          onClick={() => navigate(showBooked ? '/slots' : '/slots/booked')}
-          className="btn btn-toggle"
-        >
+        {/* ✅ FIX: toggle state directly, don't navigate away */}
+        <button onClick={handleToggle} className="btn btn-toggle">
           {showBooked ? 'Show Available Slots' : 'Show My Booked Slots'}
         </button>
 
@@ -209,19 +193,13 @@ const SlotsPage = () => {
 
             <div className="slot-actions">
               {!showBooked && (
-                <button
-                  onClick={() => handleBook(slot._id)}
-                  className="btn btn-book"
-                >
+                <button onClick={() => handleBook(slot._id)} className="btn btn-book">
                   Book
                 </button>
               )}
 
               {String(slot.createdBy?._id || slot.createdBy) === String(userId) && (
-                <button
-                  onClick={() => handleDelete(slot._id)}
-                  className="btn btn-delete"
-                >
+                <button onClick={() => handleDelete(slot._id)} className="btn btn-delete">
                   Delete
                 </button>
               )}
