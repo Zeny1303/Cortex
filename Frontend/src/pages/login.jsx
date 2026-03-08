@@ -47,7 +47,12 @@ const Login = () => {
       const data = await res.json();
 
       if (!res.ok) {
-        setError(data.msg || data.details || 'Login failed');
+        let errorMsg = 'Login failed';
+        if (typeof data.detail === 'string') errorMsg = data.detail;
+        else if (Array.isArray(data.detail)) errorMsg = data.detail.map(d => `${d.loc.slice(-1)}: ${d.msg}`).join(', ');
+        else if (data.msg) errorMsg = data.msg;
+        else if (data.detail) errorMsg = JSON.stringify(data.detail);
+        setError(errorMsg);
         return;
       }
 
@@ -58,7 +63,7 @@ const Login = () => {
 
       //  Save both token & userId
       localStorage.setItem('token', data.token);
-      localStorage.setItem('userId', data.user.id ||data.user.id);
+      localStorage.setItem('userId', data.user.id);
      
 
 

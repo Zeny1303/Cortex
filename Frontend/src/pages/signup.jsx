@@ -47,8 +47,12 @@ const Signup = () => {
       const data = await res.json();
 
       if (!res.ok) {
-        // ✅ FIX: FastAPI returns "detail", not "msg"
-        throw new Error(data.detail || 'Signup failed');
+        let errorMsg = 'Signup failed';
+        if (typeof data.detail === 'string') errorMsg = data.detail;
+        else if (Array.isArray(data.detail)) errorMsg = data.detail.map(d => `${d.loc.slice(-1)}: ${d.msg}`).join(', ');
+        else if (data.msg) errorMsg = data.msg;
+        else if (data.detail) errorMsg = JSON.stringify(data.detail);
+        throw new Error(errorMsg);
       }
 
       // ✅ FIX: Save both token AND userId (needed for slot delete ownership check)

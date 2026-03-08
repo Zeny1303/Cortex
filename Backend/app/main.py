@@ -34,7 +34,7 @@ app.include_router(slot_router.router, prefix="/api/slots")
 
 @app.get("/")
 def home():
-    return {"message": "Mock Interview Platform Backend Running 🚀"}
+    return {"message": "Mock Interview Platform Backend Running "}
 
 
 # ---------------------------
