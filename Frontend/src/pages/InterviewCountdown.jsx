@@ -7,10 +7,14 @@ const InterviewCountdown = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const interviewId = location.state?.interviewId || `INT-${Math.floor(Math.random() * 90000) + 10000}`;
+  const questions   = location.state?.questions   || [];
 
   useEffect(() => {
     if (count === 0) {
-      navigate(`/interview/session/${interviewId}`, { replace: true });
+      navigate(`/interview/session/${interviewId}`, {
+        replace: true,
+        state: { questions },   // ← pass questions into room
+      });
       return;
     }
 

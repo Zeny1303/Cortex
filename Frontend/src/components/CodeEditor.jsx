@@ -1,14 +1,14 @@
 import React, { useState } from 'react';
 import Editor from '@monaco-editor/react';
 
-const CodeEditor = () => {
+const CodeEditor = ({ starterCode = null }) => {
   const [language, setLanguage] = useState('python');
-  
+
   const defaultCode = {
-    python: 'class Solution(object):\n    def twoSum(self, nums, target):\n        """\n        :type nums: List[int]\n        :type target: int\n        :rtype: List[int]\n        """\n        pass\n',
-    javascript: '/**\n * @param {number[]} nums\n * @param {number} target\n * @return {number[]}\n */\nvar twoSum = function(nums, target) {\n    \n};\n',
-    cpp: 'class Solution {\npublic:\n    vector<int> twoSum(vector<int>& nums, int target) {\n        \n    }\n};\n',
-    java: 'class Solution {\n    public int[] twoSum(int[] nums, int target) {\n        \n    }\n}\n'
+    python:     starterCode || '# Write your solution here\npass\n',
+    javascript: '/**\n * @param {number[]} nums\n * @param {number} target\n * @return {number[]}\n */\nvar solution = function() {\n    \n};\n',
+    cpp:        'class Solution {\npublic:\n    // Write your solution here\n};\n',
+    java:       'class Solution {\n    // Write your solution here\n}\n',
   };
 
   const currentTheme = 'vs-dark'; // Could be made dynamic later

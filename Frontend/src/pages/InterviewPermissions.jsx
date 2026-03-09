@@ -8,6 +8,7 @@ const InterviewPermissions = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const interviewId = location.state?.interviewId || `INT-${Math.floor(Math.random() * 90000) + 10000}`;
+  const questions   = location.state?.questions   || [];
 
   const [camStatus, setCamStatus] = useState('pending'); // pending, ok, error
   const [micStatus, setMicStatus] = useState('pending');
@@ -138,7 +139,7 @@ const InterviewPermissions = () => {
           </div>
 
           <button 
-            onClick={() => navigate('/interview/countdown', { state: { interviewId } })}
+            onClick={() => navigate('/interview/countdown', { state: { interviewId, questions } })}
             disabled={!allClear}
             className={`w-full py-4 rounded-xl font-bold text-lg shadow-md transition-transform ${
               !allClear 
