@@ -2,7 +2,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
-from app.routers import auth_router, user_router, slot_router, interview_router, code_router
+from app.routers import auth_router, user_router, slot_router, interview_router, code_router, question_router
 from app.websocket.connection_manager import manager
 from app.utils.room_storage import save_code, load_code
 from app.utils.cleanup_rooms import cleanup_rooms
@@ -46,6 +46,7 @@ app.include_router(user_router.router, prefix="/api/user")
 app.include_router(slot_router.router, prefix="/api/slots")
 app.include_router(interview_router.router, prefix="/api/interview")
 app.include_router(code_router.router, prefix="/api/code")
+app.include_router(question_router.router, prefix="/api/questions")
 
 # Register WebSocket router for AI Interview
 app.include_router(interview_ws.router)
