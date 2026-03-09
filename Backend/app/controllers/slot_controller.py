@@ -1,32 +1,65 @@
 from uuid import uuid4
 from bson import ObjectId
 from fastapi import HTTPException
-from datetime import timedelta
-from app.database import slots_collection
+from app.models.slot_model import SlotCreate, SlotResponse
+from datetime import datetime
 
 
-async def create_slot(slot, current_user):
-
-    start_time = slot.startTime
-    end_time = start_time + timedelta(minutes=slot.duration)
-
+async def create_slot(slot_data: SlotCreate, db):
+    slots_collection = db["slots"]
+    # ... Validation logic ...
+    
     new_slot = {
-        "createdBy": str(current_user["_id"]),
-        "startTime": start_time,
-        "endTime": end_time,
-        "duration": slot.duration,
-        "skills": slot.skills,
+        "createdBy": slot_data.createdBy, # Assuming this comes from slot_data or current_user
+        "startTime": slot_data.startTime,
+        "endTime": slot_data.endTime,
+        "duration": slot_data.duration,
+        "skills": slot_data.skills,
         "isBooked": False,
         "bookedBy": None,
-        "roomId": None
+        "roomId": None,
+        "created_at": datetime.utcnow()
+    }
+    
+    result = await slots_collection.insert_one(new_slot)
+    
+    created_slot = await slots_collection.find_one({"_id": result.inserted_id})
+    return {
+        "id": str(created_slot["_id"]),
+        "createdBy": created_slot["createdBy"],
+        "startTime": created_slot["startTime"],
+        "endTime": created_slot["endTime"],
+        "duration": created_slot["duration"],
+        "skills": created_slot["skills"],
+        "isBooked": created_slot["isBooked"],
+        "bookedBy": created_slot["bookedBy"],
+        "roomId": created_slot["roomId"],
+        "created_at": created_slot["created_at"]
     }
 
-    result = await slots_collection.insert_one(new_slot)
+async def get_all_slots(db):
+    slots_collection = db["slots"]
+    slots_cursor = slots_collection.find()
+    slots = await slots_cursor.to_list(length=100)
+    
+    return [
+        {
+            "id": str(slot["_id"]),
+            "createdBy": slot["createdBy"],
+            "startTime": slot["startTime"],
+            "endTime": slot["endTime"],
+            "duration": slot["duration"],
+            "skills": slot["skills"],
+            "isBooked": slot["isBooked"],
+            "bookedBy": slot["bookedBy"],
+            "roomId": slot["roomId"],
+            "created_at": slot["created_at"]
+        }
+        for slot in slots
+    ]
 
-    new_slot["id"] = str(result.inserted_id)
-
-    return new_slot
-async def book_slot(slot_id, current_user):
+async def book_slot(slot_id, current_user, db):
+    slots_collection = db["slots"]
 
     slot = await slots_collection.find_one({"_id": ObjectId(slot_id)})
 

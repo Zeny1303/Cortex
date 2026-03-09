@@ -1,40 +1,41 @@
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from jose import jwt, JWTError
-from bson import ObjectId          # ← ADD THIS
-import os
-from app.database import users_collection
-from dotenv import load_dotenv
-
-load_dotenv()
+from bson import ObjectId
+from app.utils.jwt_handler import verify_access_token
+from app.database.mongodb import get_database
 
 security = HTTPBearer()
-JWT_SECRET = os.getenv("JWT_SECRET")
-ALGORITHM = "HS256"
-
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    request: Request,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db = Depends(get_database)
 ):
     token = credentials.credentials
-    try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[ALGORITHM])
-        user_id = payload.get("id")
-        if not user_id:
-            raise HTTPException(status_code=401, detail="Invalid token payload")
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+    payload = verify_access_token(token)
+    
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, 
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
-    # ✅ FIX: Cast string ID back to ObjectId for MongoDB lookup
+    user_id = payload.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+
     try:
         object_id = ObjectId(user_id)
     except Exception:
-        raise HTTPException(status_code=401, detail="Malformed user ID in token")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Malformed user ID in token")
 
+    users_collection = db["users"]
     user = await users_collection.find_one({"_id": object_id})
+    
     if not user:
-        raise HTTPException(status_code=401, detail="User not found")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
-    # ✅ Attach serialized id so controllers can use current_user["id"]
     user["id"] = str(user["_id"])
+    request.state.user = user
     return user

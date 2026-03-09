@@ -1,18 +1,36 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import auth_router, user_router, slot_router
+from contextlib import asynccontextmanager
+
+from app.routers import auth_router, user_router, slot_router, interview_router, code_router
 from app.websocket.connection_manager import manager
 from app.utils.room_storage import save_code, load_code
 from app.utils.cleanup_rooms import cleanup_rooms
+from app.websocket import interview_ws
 
+from app.database.mongodb import connect_to_mongo, close_mongo_connection
 import asyncio
 
+# ---------------------------
+# Application Lifespan
+# ---------------------------
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup Events
+    await connect_to_mongo()
+    asyncio.create_task(cleanup_scheduler())
+    yield
+    # Shutdown Events
+    await close_mongo_connection()
 
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:5173", 
+        "http://localhost:3000"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -26,6 +44,11 @@ app.add_middleware(
 app.include_router(auth_router.router, prefix="/api/auth")
 app.include_router(user_router.router, prefix="/api/user")
 app.include_router(slot_router.router, prefix="/api/slots")
+app.include_router(interview_router.router, prefix="/api/interview")
+app.include_router(code_router.router, prefix="/api/code")
+
+# Register WebSocket router for AI Interview
+app.include_router(interview_ws.router)
 
 
 # ---------------------------
@@ -116,8 +139,4 @@ async def cleanup_scheduler():
         # run every 1 hour
         await asyncio.sleep(3600)
 
-
-@app.on_event("startup")
-async def start_cleanup():
-
-    asyncio.create_task(cleanup_scheduler())
+

@@ -1,15 +1,9 @@
-import bcrypt
+from passlib.context import CryptContext
 
-# used during signup
-def hash_password(password: str):
-    # bcrypt expects bytes, so we encode the string to utf-8 first
-    pwd_bytes = password.encode('utf-8')
-    salt = bcrypt.gensalt()
-    hashed_password = bcrypt.hashpw(pwd_bytes, salt)
-    return hashed_password.decode('utf-8')
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# used during login
-def verify_password(plain_password: str, hashed_password: str):
-    password_byte_enc = plain_password.encode('utf-8')
-    hashed_password_bytes = hashed_password.encode('utf-8')
-    return bcrypt.checkpw(password_byte_enc, hashed_password_bytes)
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return pwd_context.verify(plain_password, hashed_password)
