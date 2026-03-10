@@ -2,7 +2,7 @@ import logging
 from typing import List, Dict
 
 from app.services.speech_to_text_service import transcribe_audio
-from app.services.text_to_speech_service import generate_voice
+from app.services.tts_service import generate_voice
 from app.services.ai_interviewer_service import ask_followup
 
 logger = logging.getLogger(__name__)

@@ -1,64 +1,218 @@
 # PrepSync — AI-Powered Mock Interview Platform
 
-> A full-stack platform for practicing coding interviews with AI-powered interviewers, real-time collaborative code editors, slot booking, and performance analytics.
+> A full-stack SaaS platform for practicing technical coding interviews with a real-time AI interviewer, collaborative code editor, WebSocket-driven voice pipeline, and performance analytics.
+
+![CI Status](https://img.shields.io/badge/build-passing-brightgreen)
+![License](https://img.shields.io/badge/license-MIT-blue)
+![Stack](https://img.shields.io/badge/stack-FastAPI%20%2B%20React-informational)
 
 ---
 
-## 🚀 Project Status
+## 📌 Table of Contents
 
-| Layer | Tech | Status |
-|---|---|---|
-| Frontend | React + Vite | ✅ Running |
-| Backend | FastAPI (Python) | ✅ Running |
-| Database | MongoDB | ✅ Connected |
-| Real-time | WebSocket | ✅ Active |
-| Auth | JWT Tokens | ✅ Working |
-
----
-
-## 🌐 URLs & Ports
-
-| Service | URL |
-|---|---|
-| **Frontend Dev Server** | `http://localhost:5173` |
-| **Backend API** | `http://localhost:8000` |
-| **API Docs (Swagger)** | `http://localhost:8000/docs` |
-| **API Docs (Redoc)** | `http://localhost:8000/redoc` |
-| **MongoDB Local** | `mongodb://localhost:27017` |
+- [Overview](#-overview)
+- [Architecture](#-architecture)
+- [Feature Set](#-feature-set)
+- [AI Voice Interview Pipeline](#-ai-voice-interview-pipeline)
+- [WebSocket Design & Challenges](#-websocket-design--challenges)
+- [Project Structure](#-project-structure)
+- [API Reference](#-api-reference)
+- [Environment Variables](#-environment-variables)
+- [Running the Project](#-running-the-project)
+- [Dependencies](#-dependencies)
+- [Known Issues & Workarounds](#-known-issues--workarounds)
 
 ---
 
-## 🗄️ Database Configuration
+## 🔍 Overview
 
-| Key | Value |
-|---|---|
-| **Database Name** | `prepdb` |
-| **Questions Collection** | `questions` |
-| **Users Collection** | `users` |
-| **Interviews Collection** | `interviews` |
-| **Slots Collection** | `slots` |
+PrepSync simulates a real technical interview experience end-to-end. Candidates connect to a live session where an AI interviewer:
+
+1. Greets them with a synthesized voice (**Amazon Polly TTS**)
+2. Asks a coding question from the **Blind 75**
+3. Listens to the candidate's spoken answer (**AssemblyAI STT**)
+4. Generates a contextual follow-up using an **LLM (Groq / Llama)**
+5. Speaks the AI response back as audio over a **WebSocket binary stream**
+
+All of this happens in a single persistent WebSocket connection, alongside a real-time **collaborative Monaco code editor** and a final **AI-generated performance report**.
 
 ---
 
-## ⚙️ Environment Variables
+## 🏗 Architecture
 
-Create a `.env` file inside `Backend/` with:
-
-```env
-# MongoDB
-MONGO_URI=mongodb://localhost:27017/prepdb
-
-# JWT Authentication
-JWT_SECRET=your_super_secret_key_here
-JWT_ALGORITHM=HS256
-JWT_EXPIRATION_DAYS=7
-
-# MongoDB Pool
-MAX_CONNECTIONS_COUNT=10
-MIN_CONNECTIONS_COUNT=1
+```
+┌────────────────────────────────────────────────────────────────┐
+│                          React Frontend                        │
+│  AIInterviewerPanel ─── AudioPlayer ─── VoiceRecorder          │
+│  InterviewRoom  ───────────────── Monaco Code Editor            │
+└──────────────────────┬────────────────────────┬───────────────┘
+                       │ WS (binary audio)      │ WS (JSON)
+                       │                        │
+┌──────────────────────▼────────────────────────▼───────────────┐
+│                       FastAPI Backend                          │
+│                                                                │
+│  /ws/interview/{session_id}    /ws/{room_id}                   │
+│  ┌──────────────────────────┐  ┌─────────────────────────────┐ │
+│  │  Voice Interview Router  │  │  Code Collaboration WS      │ │
+│  │  (JWT Auth + Binary IO)  │  │  (JSON events, room mgmt)   │ │
+│  └────────────┬─────────────┘  └─────────────────────────────┘ │
+│               │                                                │
+│   ┌───────────▼──────────────────────┐                        │
+│   │    Voice Interview Orchestrator  │                        │
+│   │  ┌─────────┐ ┌────────┐ ┌─────┐ │                        │
+│   │  │   STT   │→│  LLM   │→│ TTS │ │                        │
+│   │  │AssemblyAI Groq/Llama  Polly │ │                        │
+│   │  └─────────┘ └────────┘ └─────┘ │                        │
+│   └──────────────────────────────────┘                        │
+│                                                                │
+│  REST API   MongoDB (Motor/Async)   Code Executor (subprocess) │
+└────────────────────────────────────────────────────────────────┘
 ```
 
-> ⚠️ Never commit `.env` to Git. It is already listed in `.gitignore`.
+---
+
+## ✅ Feature Set
+
+### 🔐 Authentication
+- JWT-based signup and login with bcrypt password hashing
+- Token stored in `localStorage`, auto-rehydrated via `AuthContext`
+- WebSocket endpoints require `?token=<JWT>` query parameter (browser WebSocket APIs cannot send custom headers)
+
+### 🤖 AI Voice Interviewer
+- Real-time, fully duplex voice conversation over a persistent WebSocket
+- Three-stage pipeline per turn: STT → LLM → TTS
+- AI greeting audio pushed immediately on WebSocket connect (no user action required)
+- Conversation history maintained in-memory per session for contextual follow-ups
+
+### 💻 Live Collaborative Code Editor
+- Monaco-based editor (same engine as VS Code)
+- Real-time code sync across peers via WebSocket JSON events
+- Code state persisted per room in server memory with scheduled cleanup
+- Supports Python, JavaScript, C++, and Java
+
+### 🗃 Blind 75 Question Bank
+- 23+ curated DSA questions seeded into MongoDB
+- Each question includes: description, difficulty, category, tags, Python starter code, and 4+ test cases
+- Served via `/api/questions`, used to drive the interview session
+
+### 📊 Interview Engine
+- Start / end interview sessions via REST API
+- Per-session state tracked in MongoDB (`interviews` collection)
+- Code submission triggers test-case evaluation via `code_executor.py`
+- Final report generated by prompting the LLM with the full conversation transcript
+
+### 🗓 Slot Booking
+- Candidates can browse and book time slots for human-reviewed sessions
+- Slot state managed in MongoDB (`slots` collection)
+
+### 📈 Analytics & Reports
+- Post-interview performance report: score, strengths, weaknesses, recommendations
+- Interview history view per user
+
+---
+
+## 🎙 AI Voice Interview Pipeline
+
+The voice pipeline is the most complex subsystem. Here is the full flow per turn:
+
+```
+Candidate speaks
+      │
+      ▼
+VoiceRecorder.jsx (browser)
+  MediaRecorder → ondataavailable → ArrayBuffer
+      │ ws.send(audioBuffer)
+      ▼
+/ws/interview/{session_id}  [voice_interview_router.py]
+  receive_bytes()
+      │
+      ▼
+speech_to_text_service.py  →  AssemblyAI Streaming API
+  transcribe_audio(audio_bytes) → str transcript
+      │
+      ▼
+ai_interviewer_service.py  →  Groq LLaMA API
+  ask_followup(question, transcript, history) → str response_text
+      │
+      ▼
+tts_service.py  →  Amazon Polly
+  generate_voice(response_text) → bytes (MP3)
+      │ await ws.send_bytes(audio_bytes)
+      ▼
+AudioPlayer.jsx (browser)
+  AudioContext → decodeAudioData → source.start()
+```
+
+**AI Intro on Connect**: When a WebSocket connection is first established, an AI greeting is generated via Groq and synthesized via Polly. The audio bytes are immediately pushed to the client — no candidate input is required for the first message.
+
+---
+
+## 🔌 WebSocket Design & Challenges
+
+WebSockets were the most technically demanding part of this project. Below is an honest account of the design decisions, issues faced, and how they were resolved.
+
+### Design: Two Separate WebSocket Channels
+
+| Channel | Route | Protocol | Purpose |
+|---|---|---|---|
+| Code Collaboration | `/ws/{room_id}` | JSON text frames | Syncs Monaco editor code across peers |
+| Voice Interview | `/ws/interview/{session_id}` | Binary frames | Streams user audio in, AI audio out |
+
+These are kept separate intentionally. Mixing binary audio blobs with JSON messages in a single channel would require a complex framing protocol. Separate channels keep each handler clean and focused.
+
+### Challenge 1: WebSocket Authentication
+**Problem**: Browsers cannot set custom HTTP headers (`Authorization: Bearer ...`) when initiating a WebSocket handshake.
+
+**Solution**: JWT token is passed as a URL query parameter (`?token=<JWT>`). The server accepts the WebSocket, then immediately reads and validates the token before proceeding. If the token is invalid, the server closes the connection with code `1008 (Policy Violation)`.
+
+```python
+# voice_interview_router.py
+await websocket.accept()          # Accept first
+token = websocket.query_params.get("token")
+await get_current_user_ws(token)  # Authenticate second
+```
+
+### Challenge 2: Binary Audio Streaming
+**Problem**: The browser `MediaRecorder` API produces `Blob` objects, but WebSocket's `ws.send()` requires `ArrayBuffer`. The backend's `receive_bytes()` returns raw Python `bytes`.
+
+**Solution**:
+- **Frontend send**: `event.data.arrayBuffer()` converts the Blob to an ArrayBuffer before sending.
+- **Backend receive**: `await websocket.receive_bytes()` reads the raw binary directly.
+- **Backend response**: `await websocket.send_bytes(mp3_bytes)` sends the MP3 binary.
+- **Frontend receive**: `event.data instanceof Blob` → read as `ArrayBuffer` → `AudioContext.decodeAudioData()`.
+
+### Challenge 3: Synchronous boto3 in an Async Context
+**Problem**: `boto3` (the AWS SDK) is entirely synchronous. Calling it directly inside an `async def` function blocks the entire asyncio event loop, stalling all concurrent WebSocket connections.
+
+**Solution**: Wrap the boto3 call in `asyncio.to_thread()`, which offloads it to a thread-pool executor:
+
+```python
+async def generate_voice(text: str) -> bytes:
+    def _synthesize():
+        return polly.synthesize_speech(Text=text, OutputFormat="mp3", VoiceId="Matthew")
+    
+    response = await asyncio.to_thread(_synthesize)
+    return response["AudioStream"].read()
+```
+
+### Challenge 4: ElevenLabs Free Tier Restriction
+**Problem**: The original TTS integration used ElevenLabs, which restricts library voice access to paid plans. The API returned `402 Payment Required` on the free tier, silently breaking the voice pipeline.
+
+**Solution**: Migrated entirely to **Amazon Polly** using `boto3`. Polly provides high-quality neural voices (e.g., `Matthew`) via a pay-per-character model with a generous free tier. The `generate_voice(text) -> bytes` function signature was preserved, making the swap a drop-in replacement with no changes to the router or orchestrator.
+
+### Challenge 5: Incorrect uvicorn Startup Command
+**Problem**: Running `uvicorn main.app:app` from inside `Backend/` raised `ModuleNotFoundError: No module named 'main'` because the Python package is `app`, not `main`.
+
+**Solution**: The correct startup command is:
+```bash
+cd Backend
+uvicorn app.main:app --reload
+```
+
+### Challenge 6: AWS IAM Permissions
+**Problem**: After adding the AWS credentials, the Polly client returned `AccessDeniedException`. The AWS IAM user `ai-interviewer-tts` had no policies granting `polly:SynthesizeSpeech`.
+
+**Solution**: Attach the `AmazonPollyReadOnlyAccess` managed policy **directly** to the IAM user under **Permissions policies** (not as a Permissions boundary — boundaries only cap permissions; they don't grant them).
 
 ---
 
@@ -66,159 +220,203 @@ MIN_CONNECTIONS_COUNT=1
 
 ```
 PrepSync/
-├── Frontend/                   # React + Vite frontend
+├── Frontend/
 │   └── src/
-│       ├── pages/              # All UI pages (Dashboard, Auth, Interview, etc.)
-│       ├── components/         # Reusable components (CodeEditor, VideoPanel, etc.)
-│       ├── layout/             # Navbar, Sidebar, BookingNavbar
-│       ├── context/            # AuthContext, ThemeContext (global state)
-│       ├── services/           # authService.js (API calls)
-│       └── app.js              # Routes definition
+│       ├── app.js                     # React Router route definitions
+│       ├── config.js                  # API_URL and WS_URL constants
+│       ├── context/
+│       │   ├── AuthContext.jsx        # Global auth state (JWT, user)
+│       │   └── ThemeContext.jsx       # Dark/Light theme toggle
+│       ├── pages/                     # 24 pages (Auth, Dashboard, Interview, etc.)
+│       ├── components/
+│       │   ├── AIInterviewerPanel.jsx # Voice WS + question display
+│       │   ├── AudioPlayer.jsx        # Decodes + plays MP3 from WebSocket
+│       │   ├── VoiceRecorder.jsx      # MediaRecorder → binary audio chunk
+│       │   ├── CodeEditor.jsx         # Monaco editor (language switcher)
+│       │   ├── VideoPanel.jsx         # Camera/video placeholder
+│       │   └── interviewroom.jsx      # Code collab WS + room logic
+│       ├── layout/                    # Navbar, Sidebar, BookingNavbar
+│       └── services/                  # authService.js (Axios API calls)
 │
-└── Backend/                    # FastAPI backend
+└── Backend/
     ├── app/
-    │   ├── routers/            # API route definitions
-    │   ├── controllers/        # Business logic
-    │   ├── models/             # MongoDB document schemas
-    │   ├── services/           # Core services (AI, auth, code exec)
-    │   ├── middleware/         # JWT auth middleware
-    │   ├── websocket/          # WebSocket handlers
-    │   ├── config/             # Settings (env vars)
-    │   ├── database/           # MongoDB connection
-    │   └── utils/              # Room storage, cleanup utils
+    │   ├── main.py                    # FastAPI app, CORS, lifespan, WS router
+    │   ├── config/
+    │   │   └── settings.py            # Pydantic-Settings (env var loader)
+    │   ├── routers/
+    │   │   ├── auth_router.py         # POST /api/auth/signup, /login
+    │   │   ├── user_router.py         # GET /api/user/me
+    │   │   ├── interview_router.py    # POST/GET /api/interview
+    │   │   ├── question_router.py     # GET /api/questions
+    │   │   ├── code_router.py         # POST /api/code/execute
+    │   │   ├── slot_router.py         # GET/POST /api/slots
+    │   │   └── voice_interview_router.py  # WS /ws/interview/{session_id}
+    │   ├── services/
+    │   │   ├── tts_service.py         # Amazon Polly TTS (boto3, async-safe)
+    │   │   ├── speech_to_text_service.py  # AssemblyAI STT
+    │   │   ├── ai_interviewer_service.py  # Groq LLaMA: intro, followup, eval, report
+    │   │   ├── voice_interview_service.py # Orchestrates STT → LLM → TTS per turn
+    │   │   ├── interview_engine.py    # Interview session management
+    │   │   ├── code_execution_service.py  # Safe code execution via subprocess
+    │   │   └── code_executor.py       # Executor abstraction
+    │   ├── websocket/
+    │   │   ├── interview_ws.py        # Text-based AI interview WS
+    │   │   └── connection_manager.py  # Room-based broadcast manager
+    │   ├── models/                    # Pydantic + MongoDB document models
+    │   ├── schemas/                   # Request/Response Pydantic schemas
+    │   ├── controllers/               # auth_controller, user_controller
+    │   ├── middleware/                # JWT auth middleware
+    │   ├── database/
+    │   │   └── mongodb.py             # Async motor client, connect/close lifecycle
+    │   └── utils/
+    │       ├── room_storage.py        # In-memory room code persistence
+    │       └── cleanup_rooms.py       # Periodic room TTL cleanup
     ├── data/
-    │   └── questions.json      # Blind 75 questions dataset (23 questions)
+    │   └── questions.json             # Blind 75 DSA questions dataset
     ├── scripts/
-    │   ├── validate_questions.py  # Validates & auto-fixes questions.json
-    │   ├── seed_questions.py      # Seeds questions into MongoDB
-    │   └── verify_questions.py   # Verifies DB after seeding
-    └── main.py                 # FastAPI app entry point
+    │   ├── seed_questions.py          # Seeds questions.json into MongoDB
+    │   ├── validate_questions.py      # Validates & auto-fixes dataset schema
+    │   ├── verify_questions.py        # Verifies seeded DB state
+    │   └── e2e_health_check.py        # End-to-end system health test
+    └── tests/
+        └── test_code_execution_service.py  # 14 pytest tests for code executor
 ```
 
 ---
 
-## ✅ Features Built (v1.0)
+## 🔌 API Reference
 
-### 🔐 Authentication
-- User Signup & Login with JWT tokens
-- Password hashing with bcrypt
-- Global auth state via React `AuthContext`
-- `authService.js` handles all auth API calls
-- Token stored in localStorage, auto-loaded on page refresh
-
-### 🏠 Landing Page
-- Hero section (scrollable)
-- College showcase grid with logos and event counts
-- Modern footer with contact info and social links
-
-### 📊 Dashboard
-- Dynamically rendered user stats (from JWT)
-- Stats cards component
-- Sidebar navigation
-
-### 👤 Profile & Settings
-- Profile view and edit page
-- Dark / Light theme toggle via `ThemeContext`
-- Settings page with preferences
-
-### 📅 Interview Booking
-- Browse available time slots
-- Book an interview slot
-- Booking summary confirmation
-
-### 🎯 Interview Flow (End-to-End)
-1. **Setup** — Select interview pack and difficulty
-2. **Permission Check** — Camera & microphone permission
-3. **Countdown** — Pre-interview countdown timer
-4. **Live Room** — Real-time interview session
-5. **Completion** — Post-interview summary
-
-### 💻 Live Interview Room
-- Real-time **collaborative code editor** (WebSocket)
-- **WebRTC video panel** for face-to-face
-- AI Interviewer panel with question prompts
-- Code state persisted per room
-
-### 🤖 AI Interviewer (Backend)
-- `ai_engine.py` — Drives AI interview flow
-- `question_engine.py` — Generates DSA questions
-- `answer_evaluator.py` — Evaluates submitted answers
-- `code_executor.py` — Executes code submissions
-
-### 📋 My Interviews
-- View past interview history
-- Leaderboard and performance rankings
-- Evaluation table with scores
-
-### 🗃️ Questions Dataset (NEW)
-- **23 Blind 75 questions** seeded into MongoDB
-- All questions have: `_id`, `title`, `difficulty`, `category`, `tags`, `description`, `starter_code` (Python), `test_cases` (4+ per question)
-- Validation, seeding, and verification scripts ready
+| Method | Route | Auth | Description |
+|---|---|---|---|
+| `POST` | `/api/auth/signup` | ❌ | Register a new user |
+| `POST` | `/api/auth/login` | ❌ | Login, returns JWT access token |
+| `GET` | `/api/user/me` | ✅ | Get authenticated user profile |
+| `GET` | `/api/questions` | ✅ | List all interview questions |
+| `GET` | `/api/questions/{id}` | ✅ | Get a single question |
+| `POST` | `/api/interview/start` | ✅ | Create an interview session |
+| `GET` | `/api/interview/{id}/question` | ✅ | Get current question for session |
+| `POST` | `/api/interview/{id}/submit-code` | ✅ | Submit + evaluate code against test cases |
+| `POST` | `/api/interview/{id}/end` | ✅ | End session, generate AI report |
+| `GET` | `/api/slots` | ✅ | List available booking slots |
+| `POST` | `/api/slots/book` | ✅ | Book an interview slot |
+| `POST` | `/api/code/execute` | ✅ | Execute code snippet, return output |
+| `WS` | `/ws/{room_id}` | ❌ | Collaborative code editor WebSocket |
+| `WS` | `/ws/interview/{session_id}?token=JWT` | ✅ | Voice interview WebSocket |
 
 ---
 
-## 🔌 API Endpoints
+## ⚙️ Environment Variables
 
-| Prefix | Description |
-|---|---|
-| `POST /api/auth/signup` | Register new user |
-| `POST /api/auth/login` | Login, returns JWT |
-| `GET  /api/user/me` | Get current user profile |
-| `GET  /api/slots` | List available interview slots |
-| `POST /api/slots/book` | Book a slot |
-| `GET  /api/interview` | Get interview sessions |
-| `POST /api/code/run` | Execute code submission |
-| `WS   /ws/{room_id}` | Collaborative code editor WebSocket |
-| `WS   /ws/interview` | AI interview WebSocket |
+Create `Backend/.env`:
+
+```env
+# ── MongoDB ────────────────────────────────────
+MONGO_URI=mongodb://localhost:27017
+JWT_SECRET=your_super_long_random_secret
+JWT_ALGORITHM=HS256
+JWT_EXPIRATION_DAYS=7
+
+# ── AI Models ──────────────────────────────────
+GROQ_API_KEY=your_groq_api_key
+AI_MODEL=llama-3.1-8b-instant
+
+# ── Speech-to-Text ─────────────────────────────
+STT_PROVIDER=assemblyai
+ASSEMBLYAI_API_KEY=your_assemblyai_key
+
+# ── Text-to-Speech (Amazon Polly) ──────────────
+TTS_PROVIDER=polly
+AWS_ACCESS_KEY=your_aws_access_key_id
+AWS_SECRET_KEY=your_aws_secret_access_key
+AWS_REGION=us-east-1
+```
+
+> ⚠️ `.env` is in `.gitignore`. Never commit credentials to version control.
+
+**Required AWS IAM permissions** for the Polly user: `AmazonPollyReadOnlyAccess` (attach as a Permissions Policy, not a Permissions Boundary).
 
 ---
 
 ## 🚀 Running the Project
 
-### Backend
+### 1. Backend
 ```bash
 cd Backend
 pip install -r requirements.txt
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload          # ⚠️ Must be run from Backend/ directory
 ```
+> API Docs: http://localhost:8000/docs
 
-### Frontend
+### 2. Frontend
 ```bash
 cd Frontend
 npm install
-npm run dev
+npm start                              # Runs on http://localhost:3000
 ```
 
-### Seed Questions to MongoDB
+### 3. Seed the Question Bank
 ```bash
 cd Backend
-python scripts/validate_questions.py   # validate dataset first
-python scripts/seed_questions.py       # seed into MongoDB
-python scripts/verify_questions.py     # verify DB
+python scripts/validate_questions.py  # Validate dataset
+python scripts/seed_questions.py      # Seed into MongoDB
+python scripts/verify_questions.py    # Confirm
+```
+
+### 4. Run E2E Health Check
+```bash
+cd Backend
+python scripts/e2e_health_check.py    # Runs full pipeline test
 ```
 
 ---
 
 ## 📦 Dependencies
 
-### Backend (Key)
-| Package | Purpose |
-|---|---|
-| `fastapi` | Web framework |
-| `motor` | Async MongoDB driver |
-| `pymongo` | MongoDB driver |
-| `python-jose` | JWT token handling |
-| `bcrypt` | Password hashing |
-| `pydantic-settings` | Settings via .env |
-| `websockets` | WebSocket support |
+### Backend (Key Packages)
+| Package | Version | Purpose |
+|---|---|---|
+| `fastapi` | latest | Web framework + WebSocket support |
+| `uvicorn` | latest | ASGI server |
+| `motor` | latest | Async MongoDB driver |
+| `pydantic-settings` | v2 | Type-safe env var loading |
+| `python-jose` | latest | JWT signing and validation |
+| `bcrypt` | latest | Password hashing |
+| `groq` | latest | Groq LLaMA API client |
+| `boto3` | 1.42+ | AWS SDK — Amazon Polly TTS |
+| `assemblyai` | latest | Speech-to-text transcription |
+| `httpx` | latest | Async HTTP client |
 
-### Frontend (Key)
+### Frontend (Key Packages)
 | Package | Purpose |
 |---|---|
 | `react` | UI framework |
 | `react-router-dom` | Client-side routing |
 | `axios` | HTTP requests |
-| `vite` | Build tool / dev server |
+| `@monaco-editor/react` | VS Code-grade code editor |
+
+---
+
+## 🐛 Known Issues & Workarounds
+
+| Issue | Status | Workaround |
+|---|---|---|
+| Uvicorn must be started from `Backend/` with `uvicorn app.main:app` | ✅ Fixed | Use exact command above |
+| ElevenLabs free tier blocks library voices | ✅ Resolved | Migrated to Amazon Polly |
+| AWS Polly `AccessDeniedException` | ✅ Resolved | Attach `AmazonPollyReadOnlyAccess` as a Permissions Policy, not a boundary |
+| `boto3.synthesize_speech` blocks asyncio | ✅ Fixed | Wrapped in `asyncio.to_thread()` |
+| WebSocket auth (browsers can't set headers) | ✅ Designed around | JWT passed as `?token=` query param |
+
+---
+
+## 🗺 Roadmap
+
+- [ ] Full Blind 75 question set (75 questions)
+- [ ] Real-time audio waveform visualizer in the interviewer panel
+- [ ] Question difficulty adaptive engine (based on past performance)
+- [ ] User progress tracking per question tag / category
+- [ ] Email notifications for booked interview slots
+- [ ] Admin dashboard for slot and interview management
+- [ ] Persist WebSocket sessions with Redis for multi-worker production deployments
 
 ---
 
@@ -226,14 +424,10 @@ python scripts/verify_questions.py     # verify DB
 
 | Name | Role |
 |---|---|
-| PrepSync Team | Full Stack Development |
+| Sneha | Full Stack — Backend (FastAPI, AI Engine, WebSockets) + Frontend (React) |
 
 ---
 
-## 📌 Next Steps (Planned)
-- [ ] Add full Blind 75 question set (75 questions)
-- [ ] AI answer evaluation via LLM API
-- [ ] User progress tracking per question
-- [ ] Question difficulty adaptive engine
-- [ ] Email notifications for booked interviews
-- [ ] Admin dashboard for slot management
+## 📄 License
+
+MIT © 2025 PrepSync

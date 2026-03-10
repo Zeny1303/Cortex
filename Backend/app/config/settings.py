@@ -57,17 +57,9 @@ class Settings(BaseSettings):
     )
 
     # ── Text-to-Speech ────────────────────────────────────────────────────────
-    TTS_PROVIDER:      Literal["elevenlabs", "openai_tts"] = Field(
-        "elevenlabs",
+    TTS_PROVIDER:      Literal["polly", "openai_tts"] = Field(
+        "polly",
         description="TTS backend to use",
-    )
-    ELEVENLABS_API_KEY: Optional[str] = Field(
-        None,
-        description="Required when TTS_PROVIDER=elevenlabs",
-    )
-    VOICE_MODEL_ID: Optional[str] = Field(
-        None,
-        description="ElevenLabs voice / model ID (e.g. 'eleven_multilingual_v2')",
     )
 
     # ── Cross-field validation ─────────────────────────────────────────────────
@@ -80,10 +72,7 @@ class Settings(BaseSettings):
         # here so the app can still boot without the key during local dev.
         return v or None
 
-    @field_validator("ELEVENLABS_API_KEY", mode="after")
-    @classmethod
-    def elevenlabs_key_required(cls, v: Optional[str], info) -> Optional[str]:
-        return v or None
+
 
     # ── Pydantic v2 config ─────────────────────────────────────────────────────
     model_config = SettingsConfigDict(
@@ -105,8 +94,6 @@ class Settings(BaseSettings):
     @property
     def effective_tts_key(self) -> Optional[str]:
         """Return the API key for the configured TTS provider."""
-        if self.TTS_PROVIDER == "elevenlabs":
-            return self.ELEVENLABS_API_KEY
         return self.OPENAI_API_KEY  # openai_tts uses the same key
 
 
