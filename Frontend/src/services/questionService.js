@@ -15,8 +15,12 @@ const BASE = `${API_URL}/api/questions`;
  */
 export async function fetchRandomQuestions(difficulty = 'medium', count = 2) {
   const params = new URLSearchParams({ difficulty, count });
+  const token = localStorage.getItem('token');
   const res = await fetch(`${BASE}/random?${params}`, {
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+    },
   });
 
   if (!res.ok) {
@@ -33,8 +37,12 @@ export async function fetchRandomQuestions(difficulty = 'medium', count = 2) {
  * @returns {Promise<Object>}   Sanitized question object
  */
 export async function fetchQuestionById(questionId) {
+  const token = localStorage.getItem('token');
   const res = await fetch(`${BASE}/${questionId}`, {
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+    },
   });
 
   if (!res.ok) {
@@ -55,9 +63,13 @@ export async function fetchQuestionList(difficulty = null, category = null) {
   const params = new URLSearchParams();
   if (difficulty) params.append('difficulty', difficulty);
   if (category)   params.append('category', category);
+  const token = localStorage.getItem('token');
 
   const res = await fetch(`${BASE}/?${params}`, {
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+    },
   });
 
   if (!res.ok) {

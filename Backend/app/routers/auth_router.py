@@ -28,7 +28,7 @@ async def get_me(current_user: dict = Depends(get_current_user), db = Depends(ge
     user_id = current_user.get("id")
     # Use the service layer function as requested
     user = await auth_service.get_user_by_id(user_id, db)
-    return {"user": user}
+    return user
 
 @router.post("/logout")
 async def logout():

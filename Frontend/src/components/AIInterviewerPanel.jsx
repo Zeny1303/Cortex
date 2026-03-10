@@ -1,4 +1,6 @@
-import React from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import VoiceRecorder from './VoiceRecorder';
+import AudioPlayer from './AudioPlayer';
 
 // Difficulty badge colors
 const DIFFICULTY_COLORS = {
@@ -11,11 +13,69 @@ const AIInterviewerPanel = ({
   question       = null,
   currentIndex   = 0,
   totalQuestions = 0,
+  sessionId,      // Used for websocket connection
   onNext,
   onPrev,
 }) => {
   const difficultyClass =
     DIFFICULTY_COLORS[question?.difficulty] || DIFFICULTY_COLORS.medium;
+
+  const [isRecording, setIsRecording] = useState(false);
+  const [isConnected, setIsConnected] = useState(false);
+  
+  const wsRef = useRef(null);
+  const audioPlayerRef = useRef(null);
+
+  // Initialize WebSocket Connection for Voice Interview
+  useEffect(() => {
+     if (!sessionId) return;
+     
+     // Get JWT token for auth
+     const token = localStorage.getItem('token');
+     const wsUrl = `ws://localhost:8000/ws/interview/${sessionId}?token=${token}`;
+     
+     const ws = new WebSocket(wsUrl);
+     wsRef.current = ws;
+
+     ws.onopen = () => {
+         console.log('Connected to Voice Interview WebSocket');
+         setIsConnected(true);
+     };
+
+     // The backend sends raw audio bytes
+     ws.onmessage = async (event) => {
+         // event.data will be a Blob from FastAPI's send_bytes()
+         if (event.data instanceof Blob) {
+             const buffer = await event.data.arrayBuffer();
+             if (buffer.byteLength > 0 && audioPlayerRef.current) {
+                 audioPlayerRef.current.playAudioSegment(buffer);
+             }
+         }
+     };
+
+     ws.onclose = () => {
+         console.log('Disconnected from Voice Interview WebSocket');
+         setIsConnected(false);
+     };
+
+     ws.onerror = (error) => {
+         console.error('WebSocket Error:', error);
+     };
+
+     return () => {
+         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+             wsRef.current.close();
+         }
+     };
+  }, [sessionId]);
+
+  // Handler for sending candidate's audio to backend
+  const handleAudioChunk = (audioBuffer) => {
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.send(audioBuffer);
+      }
+  };
+
 
   return (
     <div className="flex flex-col h-full overflow-hidden bg-[#1e1e1e]">
@@ -29,13 +89,23 @@ const AIInterviewerPanel = ({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
               </svg>
             </div>
-            <div className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-green-500 border-2 border-[#2d2d2d]" />
+            {/* Connection Status indicator */}
+            <div className={`absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full border-2 border-[#2d2d2d] ${isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
           </div>
           <div>
             <h3 className="font-semibold text-gray-200 text-sm">AI Interviewer</h3>
             <p className="text-xs text-emerald-400 font-medium flex items-center">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5 animate-pulse" />
-              Listening...
+              {isConnected ? (
+                  <>
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5 animate-pulse" />
+                    Connected
+                  </>
+              ) : (
+                  <>
+                    <span className="w-1.5 h-1.5 rounded-full bg-red-500 mr-1.5" />
+                    Disconnected
+                  </>
+              )}
             </p>
           </div>
         </div>
@@ -46,6 +116,20 @@ const AIInterviewerPanel = ({
             Q{currentIndex + 1}/{totalQuestions}
           </span>
         )}
+      </div>
+
+      {/* ── Audio Components ───────────────────────────── */}
+      <div className="p-4 border-b border-[#3e3e42] bg-[#222222] flex flex-col items-center justify-center space-y-3">
+          <AudioPlayer ref={audioPlayerRef} />
+          {isConnected ? (
+              <VoiceRecorder 
+                isRecording={isRecording} 
+                setIsRecording={setIsRecording} 
+                onAudioChunk={handleAudioChunk} 
+              />
+          ) : (
+              <p className="text-sm text-yellow-500 mt-2">Connecting to AI Voice Engine...</p>
+          )}
       </div>
 
       {/* ── Question Display Area ───────────────────────── */}
@@ -114,22 +198,6 @@ const AIInterviewerPanel = ({
             </div>
           </>
         )}
-      </div>
-
-      {/* ── Input Area (chat) ─────────────────────────── */}
-      <div className="p-3 border-t border-[#3e3e42] bg-[#1e1e1e] flex-shrink-0">
-        <div className="relative">
-          <input
-            type="text"
-            placeholder="Type a message or ask a hint..."
-            className="w-full bg-[#2d2d2d] border border-[#3e3e42] text-gray-200 text-sm rounded-md pl-3 pr-10 py-2 focus:outline-none focus:border-emerald-500 transition-colors placeholder-gray-500"
-          />
-          <button className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-emerald-500 transition-colors">
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-            </svg>
-          </button>
-        </div>
       </div>
 
     </div>

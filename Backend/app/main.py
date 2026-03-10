@@ -7,6 +7,7 @@ from app.websocket.connection_manager import manager
 from app.utils.room_storage import save_code, load_code
 from app.utils.cleanup_rooms import cleanup_rooms
 from app.websocket import interview_ws
+from app.routers import voice_interview_router
 
 from app.database.mongodb import connect_to_mongo, close_mongo_connection
 import asyncio
@@ -50,6 +51,9 @@ app.include_router(question_router.router, prefix="/api/questions")
 
 # Register WebSocket router for AI Interview
 app.include_router(interview_ws.router)
+
+# Register Voice Interview WebSocket Router
+app.include_router(voice_interview_router.router)
 
 
 # ---------------------------

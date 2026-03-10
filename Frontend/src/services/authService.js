@@ -58,12 +58,10 @@ const getMe = async () => {
     throw new Error(data.detail || data.message || 'Failed to fetch user data');
   }
 
-  // Update local user cache for generic immediate uses
-  if (data.user) {
-    localStorage.setItem('user', JSON.stringify(data.user));
-  }
+  // /api/auth/me returns a flat user object {id, name, email, skills, ...}
+  localStorage.setItem('user', JSON.stringify(data));
 
-  return data.user;
+  return data;
 };
 
 const logout = () => {

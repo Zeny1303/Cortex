@@ -14,6 +14,8 @@ const Auth = () => {
     email: '',
     password: ''
   });
+  const [error, setError]     = useState('');
+  const [loading, setLoading] = useState(false);
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -21,6 +23,8 @@ const Auth = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setError('');
+    setLoading(true);
     try {
       if (isLogin) {
         await login(formData.email, formData.password);
@@ -31,8 +35,9 @@ const Auth = () => {
         navigate('/dashboard');
       }
     } catch (error) {
-      // Improved error rendering avoiding object [object Object] alert if raw response passed loosely
-      alert(error.message || 'Authentication failed. Please check your credentials.');
+      setError(error.message || 'Authentication failed. Please check your credentials.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -139,11 +144,27 @@ const Auth = () => {
             />
           </div>
 
-          <button 
-            type="submit" 
-            className="w-full py-4 mt-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold text-lg shadow-lg shadow-indigo-500/30 transition-all transform hover:-translate-y-0.5"
+          {/* Inline Error Message */}
+          {error && (
+            <div className="px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
+              ⚠️ {error}
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={loading}
+            className={`w-full py-4 mt-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold text-lg shadow-lg shadow-indigo-500/30 transition-all transform hover:-translate-y-0.5 ${loading ? 'opacity-60 cursor-not-allowed' : ''}`}
           >
-            {isLogin ? 'Sign In' : 'Sign Up'}
+            {loading ? (
+              <span className="flex items-center justify-center gap-2">
+                <svg className="animate-spin w-5 h-5" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                </svg>
+                {isLogin ? 'Signing in...' : 'Creating account...'}
+              </span>
+            ) : (isLogin ? 'Sign In' : 'Sign Up')}
           </button>
 
         </form>

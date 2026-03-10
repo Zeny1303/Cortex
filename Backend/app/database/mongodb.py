@@ -17,7 +17,7 @@ async def connect_to_mongo():
         maxPoolSize=settings.MAX_CONNECTIONS_COUNT,
         minPoolSize=settings.MIN_CONNECTIONS_COUNT
     )
-    db_config.db = db_config.client["prep"]
+    db_config.db = db_config.client["prepdb"]
     logger.info("Connected to MongoDB successfully.")
 
 async def close_mongo_connection():
