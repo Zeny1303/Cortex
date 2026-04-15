@@ -13,7 +13,8 @@ async def create_slot(
     current_user = Depends(get_current_user),
     db = Depends(get_database)
 ):
-    return await slot_controller.create_slot(slot, current_user)
+    return await slot_controller.create_slot(slot, current_user, db)  # ← current_user restored
+
 
 @router.post("/book/{slot_id}")
 async def book_slot(
@@ -23,25 +24,32 @@ async def book_slot(
 ):
     return await slot_controller.book_slot(slot_id, current_user, db)
 
+
 @router.get("/available")
 async def get_available_slots(db = Depends(get_database)):
-    # Note: Assumes slot_controller gets db dependency in current state
-    return await slot_controller.get_available_slots()
+    return await slot_controller.get_available_slots(db)
+
 
 @router.get("/booked")
 async def get_my_booked_slots(
-    current_user = Depends(get_current_user)
+    current_user = Depends(get_current_user),
+    db = Depends(get_database)
 ):
-    return await slot_controller.get_my_booked_slots(current_user)
+    return await slot_controller.get_my_booked_slots(current_user, db)
+
 
 @router.delete("/cancel/{slot_id}")
 async def cancel_slot(
     slot_id: str,
-    current_user = Depends(get_current_user)
+    current_user = Depends(get_current_user),
+    db = Depends(get_database)
 ):
-    return await slot_controller.cancel_slot(slot_id, current_user)
+    return await slot_controller.cancel_slot(slot_id, current_user, db)
+
+
 @router.get("/created-and-booked")
 async def get_created_and_booked_slots(
-    current_user = Depends(get_current_user)
+    current_user = Depends(get_current_user),
+    db = Depends(get_database)
 ):
-    return await slot_controller.get_created_and_booked_slots(current_user)
+    return await slot_controller.get_created_and_booked_slots(current_user, db)

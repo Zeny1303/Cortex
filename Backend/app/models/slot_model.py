@@ -7,7 +7,7 @@ class SlotCreate(BaseModel):
     endTime: datetime
     duration: int
     skills: List[str]
-    createdBy: str
+    createdBy: str          # ⚠️ security issue — should come from JWT, not request body
 
 class SlotResponse(SlotCreate):
     id: str

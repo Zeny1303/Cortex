@@ -1,189 +1,264 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
+import { Eye, EyeOff, ArrowRight, Check, X } from 'lucide-react';
+import ThemeToggle from '../components/ThemeToggle';
 
-const Auth = () => {
-  const [isLogin, setIsLogin] = useState(true);
-  const { isDarkMode, toggleTheme } = useTheme();
+const getPasswordChecks = (pw) => ({
+  length:  pw.length >= 6,
+  upper:   /[A-Z]/.test(pw),
+  lower:   /[a-z]/.test(pw),
+  special: /\W/.test(pw),
+});
+
+const strengthLabel = (checks) => {
+  const n = Object.values(checks).filter(Boolean).length;
+  if (n <= 1) return { label: 'WEAK',   w: '25%',  color: 'bg-swiss-accent' };
+  if (n === 2) return { label: 'FAIR',   w: '50%',  color: 'bg-black' };
+  if (n === 3) return { label: 'GOOD',   w: '75%',  color: 'bg-black' };
+  return           { label: 'STRONG', w: '100%', color: 'bg-black' };
+};
+
+export default function Auth() {
+  const [isLogin, setIsLogin]           = useState(true);
+  const [showPw, setShowPw]             = useState(false);
+  const [formData, setFormData]         = useState({ name: '', email: '', password: '' });
+  const [error, setError]               = useState('');
+  const [loading, setLoading]           = useState(false);
   const navigate = useNavigate();
   const { login, signup } = useAuth();
 
-  const [formData, setFormData] = useState({
-    name: '',
-    email: '',
-    password: ''
-  });
-  const [error, setError]     = useState('');
-  const [loading, setLoading] = useState(false);
+  const checks   = getPasswordChecks(formData.password);
+  const strength = strengthLabel(checks);
+  const pwValid  = Object.values(checks).every(Boolean);
 
-  const handleChange = (e) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
-  };
+  const handleChange = (e) =>
+    setFormData((p) => ({ ...p, [e.target.name]: e.target.value }));
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    if (!isLogin && !pwValid) { setError('Meet all password requirements.'); return; }
     setLoading(true);
     try {
       if (isLogin) {
         await login(formData.email, formData.password);
-        navigate('/dashboard');
       } else {
         await signup(formData.name, formData.email, formData.password);
         await login(formData.email, formData.password);
-        navigate('/dashboard');
       }
-    } catch (error) {
-      setError(error.message || 'Authentication failed. Please check your credentials.');
+      navigate('/dashboard');
+    } catch (err) {
+      setError(err.message || 'Authentication failed.');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className={`min-h-screen flex items-center justify-center relative overflow-hidden transition-colors duration-300 ${isDarkMode ? 'bg-[#0f1115]' : 'bg-gray-50'}`}>
-      
-      {/* Background Orbs for Glassmorphism Effect */}
-      <div className="absolute top-1/4 left-1/4 w-[500px] h-[500px] bg-indigo-500/30 rounded-full mix-blend-multiply filter blur-[100px] animate-blob"></div>
-      <div className="absolute top-1/3 right-1/4 w-[400px] h-[400px] bg-blue-500/30 rounded-full mix-blend-multiply filter blur-[100px] animate-blob animation-delay-2000"></div>
-      <div className="absolute bottom-1/4 left-1/3 w-[600px] h-[600px] bg-purple-500/20 rounded-full mix-blend-multiply filter blur-[120px] animate-blob animation-delay-4000"></div>
-      
-      {/* Theme Toggle Navbar (Minimal) */}
-      <div className="absolute top-0 right-0 p-6 z-50">
-        <button 
-          onClick={toggleTheme}
-          className={`p-3 rounded-full backdrop-blur-md shadow-lg transition-transform hover:scale-110 ${isDarkMode ? 'bg-white/10 border border-white/20 text-white' : 'bg-gray-900/10 border border-gray-900/20 text-gray-900'}`}
-        >
-          {isDarkMode ? (
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
-          ) : (
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" /></svg>
-          )}
-        </button>
+    <div className="min-h-screen bg-white dark:bg-black text-black dark:text-white flex flex-col swiss-noise relative">
+
+      {/* Top bar */}
+      <div className="border-b-2 border-black dark:border-white flex items-stretch h-14">
+        <a href="/"
+          className="flex items-center px-6 border-r-2 border-black dark:border-white
+                     font-black text-sm uppercase tracking-widest
+                     hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black
+                     transition-colors duration-150">
+          CORTEX
+        </a>
+        <div className="flex items-center px-6 ml-auto">
+          <span className="text-xs font-bold uppercase tracking-widest text-black/40 dark:text-white/40">
+            {isLogin ? 'Sign In' : 'Create Account'}
+          </span>
+        </div>
+        <ThemeToggle />
       </div>
 
-      <div className="absolute top-0 left-0 p-6 z-50">
-        <button onClick={() => navigate('/')} className={`flex items-center gap-3 transition-opacity hover:opacity-80 ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
-          <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white font-bold text-xl shadow-lg">A</div>
-          <span className="font-extrabold text-xl tracking-tight hidden sm:block">AI Interview</span>
-        </button>
-      </div>
+      {/* Main */}
+      <div className="flex-1 grid grid-cols-1 lg:grid-cols-12">
 
-      {/* Glassmorphism Auth Card */}
-      <div className={`relative z-10 w-full max-w-md p-8 sm:p-10 rounded-3xl shadow-2xl backdrop-blur-xl border ${
-        isDarkMode 
-          ? 'bg-white/5 border-white/10 shadow-black/50' 
-          : 'bg-white/40 border-white/60 shadow-indigo-900/10'
-      }`}>
-        
-        <div className="text-center mb-10">
-          <h2 className={`text-3xl font-extrabold mb-2 ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
-            {isLogin ? 'Welcome Back' : 'Create Account'}
-          </h2>
-          <p className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-            {isLogin ? 'Enter your details to access your dashboard.' : 'Sign up to start your mock interviews.'}
+        {/* Left: geometric composition */}
+        <div className="hidden lg:flex lg:col-span-5 border-r-2 border-black dark:border-white
+                        flex-col justify-between p-12 swiss-grid-pattern bg-swiss-muted dark:bg-white/5">
+          <div>
+            <span className="text-swiss-accent text-xs font-black uppercase tracking-widest">
+              01. Access
+            </span>
+            <h2 className="mt-4 font-black uppercase tracking-tighter leading-none
+                           text-[clamp(3rem,5vw,5rem)]">
+              PRACTICE.<br />PERFORM.<br />
+              <span className="text-swiss-accent">PREVAIL.</span>
+            </h2>
+          </div>
+
+          {/* Bauhaus composition */}
+          <div className="relative h-64 border-2 border-black dark:border-white swiss-dots">
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2
+                            w-32 h-32 rounded-full border-4 border-black dark:border-white" />
+            <div className="absolute top-6 right-6 w-12 h-12 bg-swiss-accent" />
+            <div className="absolute top-1/2 left-0 right-0 h-0.5 bg-black dark:bg-white" />
+            <div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-black dark:bg-white" />
+            <div className="absolute bottom-6 left-6 w-5 h-5 bg-black dark:bg-white rounded-full" />
+          </div>
+
+          <p className="text-xs font-bold uppercase tracking-widest text-black/40 dark:text-white/40">
+            AI-Powered Mock Interviews — Cortex / 2025
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
-          
-          {!isLogin && (
-            <div>
-              <label className={`block text-sm font-semibold mb-2 ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>Full Name</label>
-              <input 
-                type="text" 
-                name="name"
-                value={formData.name}
-                onChange={handleChange}
-                required={!isLogin}
-                placeholder="Alex Walker"
-                className={`w-full px-5 py-3 rounded-xl outline-none backdrop-blur-md transition-all border focus:ring-2 focus:ring-indigo-500 ${
-                  isDarkMode 
-                    ? 'bg-black/20 border-white/10 text-white placeholder-gray-500 focus:bg-black/40' 
-                    : 'bg-white/50 border-white/50 text-gray-900 placeholder-gray-400 focus:bg-white/80'
-                }`}
-              />
+        {/* Right: form */}
+        <div className="lg:col-span-7 flex items-center justify-center p-6 lg:p-16">
+          <div className="w-full max-w-md">
+
+            {/* Tab toggle */}
+            <div className="flex border-2 border-black dark:border-white mb-10">
+              {['Sign In', 'Sign Up'].map((label, i) => {
+                const active = isLogin ? i === 0 : i === 1;
+                return (
+                  <button
+                    key={label}
+                    onClick={() => { setIsLogin(i === 0); setError(''); }}
+                    className={`flex-1 h-12 text-xs font-black uppercase tracking-widest transition-colors duration-150
+                      ${active ? 'bg-black dark:bg-white text-white dark:text-black' : 'bg-white dark:bg-black text-black dark:text-white hover:bg-swiss-muted dark:hover:bg-white/10'}`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
             </div>
-          )}
 
-          <div>
-            <label className={`block text-sm font-semibold mb-2 ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>Email Address</label>
-            <input 
-              type="email" 
-              name="email"
-              value={formData.email}
-              onChange={handleChange}
-              required
-              placeholder="alex@example.com"
-              className={`w-full px-5 py-3 rounded-xl outline-none backdrop-blur-md transition-all border focus:ring-2 focus:ring-indigo-500 ${
-                isDarkMode 
-                  ? 'bg-black/20 border-white/10 text-white placeholder-gray-500 focus:bg-black/40' 
-                  : 'bg-white/50 border-white/50 text-gray-900 placeholder-gray-400 focus:bg-white/80'
-              }`}
-            />
+            <form onSubmit={handleSubmit} className="space-y-0">
+
+              {/* Name (signup only) */}
+              {!isLogin && (
+                <div className="border-2 border-black dark:border-white border-b-0">
+                  <input
+                    type="text"
+                    name="name"
+                    placeholder="FULL NAME"
+                    value={formData.name}
+                    onChange={handleChange}
+                    required
+                    className="w-full h-14 px-5 bg-white dark:bg-black text-black dark:text-white text-sm font-bold
+                               uppercase tracking-widest placeholder:text-black/30 dark:placeholder:text-white/30
+                               focus:outline-none focus:bg-swiss-muted dark:focus:bg-white/5 transition-colors duration-150"
+                  />
+                </div>
+              )}
+
+              {/* Email */}
+              <div className="border-2 border-black dark:border-white border-b-0">
+                <input
+                  type="email"
+                  name="email"
+                  placeholder="EMAIL ADDRESS"
+                  value={formData.email}
+                  onChange={handleChange}
+                  required
+                  className="w-full h-14 px-5 bg-white dark:bg-black text-black dark:text-white text-sm font-bold
+                             uppercase tracking-widest placeholder:text-black/30 dark:placeholder:text-white/30
+                             focus:outline-none focus:bg-swiss-muted dark:focus:bg-white/5 transition-colors duration-150"
+                />
+              </div>
+
+              {/* Password */}
+              <div className="border-2 border-black dark:border-white relative">
+                <input
+                  type={showPw ? 'text' : 'password'}
+                  name="password"
+                  placeholder="PASSWORD"
+                  value={formData.password}
+                  onChange={handleChange}
+                  required
+                  className="w-full h-14 px-5 pr-14 bg-white dark:bg-black text-black dark:text-white text-sm font-bold
+                             uppercase tracking-widest placeholder:text-black/30 dark:placeholder:text-white/30
+                             focus:outline-none focus:bg-swiss-muted dark:focus:bg-white/5 transition-colors duration-150"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPw((p) => !p)}
+                  className="absolute right-0 top-0 h-full w-14 flex items-center justify-center
+                             border-l-2 border-black dark:border-white
+                             hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black
+                             transition-colors duration-150"
+                  aria-label="Toggle password visibility"
+                >
+                  {showPw ? <EyeOff size={16} strokeWidth={2.5} /> : <Eye size={16} strokeWidth={2.5} />}
+                </button>
+              </div>
+
+              {/* Password checks (signup) */}
+              {!isLogin && formData.password.length > 0 && (
+                <div className="border-2 border-black dark:border-white border-t-0 p-4 bg-swiss-muted dark:bg-white/5 swiss-dots">
+                  <div className="grid grid-cols-2 gap-2 mb-3">
+                    {[
+                      ['6+ characters', checks.length],
+                      ['Uppercase',     checks.upper],
+                      ['Lowercase',     checks.lower],
+                      ['Special char',  checks.special],
+                    ].map(([label, valid]) => (
+                      <div key={label} className="flex items-center gap-2">
+                        {valid
+                          ? <Check size={12} strokeWidth={3} className="text-black dark:text-white flex-shrink-0" />
+                          : <X     size={12} strokeWidth={3} className="text-swiss-accent flex-shrink-0" />}
+                        <span className={`text-[10px] font-bold uppercase tracking-widest ${valid ? 'text-black dark:text-white' : 'text-black/40 dark:text-white/40'}`}>
+                          {label}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Strength bar */}
+                  <div className="h-1 w-full bg-black/10 dark:bg-white/10">
+                    <div
+                      className={`h-1 transition-all duration-300 ${strength.color}`}
+                      style={{ width: strength.w }}
+                    />
+                  </div>
+                  <p className="mt-1 text-[10px] font-black uppercase tracking-widest text-black/40 dark:text-white/40">
+                    Strength: {strength.label}
+                  </p>
+                </div>
+              )}
+
+              {/* Error */}
+              {error && (
+                <div className="border-2 border-swiss-accent border-t-0 px-5 py-3 bg-swiss-accent/5">
+                  <p className="text-xs font-bold uppercase tracking-widest text-swiss-accent">
+                    ⚠ {error}
+                  </p>
+                </div>
+              )}
+
+              {/* Submit */}
+              <button
+                type="submit"
+                disabled={loading || (!isLogin && !pwValid)}
+                className="w-full h-14 flex items-center justify-between px-5
+                           bg-black dark:bg-white text-white dark:text-black text-sm font-black uppercase tracking-widest
+                           border-2 border-black dark:border-white
+                           hover:bg-swiss-accent hover:border-swiss-accent dark:hover:bg-swiss-accent dark:hover:border-swiss-accent dark:hover:text-white
+                           disabled:opacity-40 disabled:cursor-not-allowed
+                           transition-colors duration-150 mt-0"
+              >
+                <span>{loading ? 'Processing...' : (isLogin ? 'Sign In' : 'Create Account')}</span>
+                <ArrowRight size={16} strokeWidth={3} />
+              </button>
+            </form>
+
+            {/* Switch mode */}
+            <p className="mt-6 text-xs font-bold uppercase tracking-widest text-black/40 dark:text-white/40 text-center">
+              {isLogin ? "No account?" : "Have an account?"}
+              <button
+                onClick={() => { setIsLogin((p) => !p); setError(''); }}
+                className="ml-2 text-black dark:text-white underline hover:text-swiss-accent transition-colors duration-150"
+              >
+                {isLogin ? 'Sign Up' : 'Sign In'}
+              </button>
+            </p>
           </div>
-
-          <div>
-            <label className={`flex justify-between text-sm font-semibold mb-2 ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-              <span>Password</span>
-              {isLogin && <a href="#" className="text-indigo-500 hover:text-indigo-400 font-medium">Forgot?</a>}
-            </label>
-            <input 
-              type="password" 
-              name="password"
-              value={formData.password}
-              onChange={handleChange}
-              required
-              placeholder="••••••••"
-              className={`w-full px-5 py-3 rounded-xl outline-none backdrop-blur-md transition-all border focus:ring-2 focus:ring-indigo-500 ${
-                isDarkMode 
-                  ? 'bg-black/20 border-white/10 text-white placeholder-gray-500 focus:bg-black/40' 
-                  : 'bg-white/50 border-white/50 text-gray-900 placeholder-gray-400 focus:bg-white/80'
-              }`}
-            />
-          </div>
-
-          {/* Inline Error Message */}
-          {error && (
-            <div className="px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
-              ⚠️ {error}
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className={`w-full py-4 mt-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold text-lg shadow-lg shadow-indigo-500/30 transition-all transform hover:-translate-y-0.5 ${loading ? 'opacity-60 cursor-not-allowed' : ''}`}
-          >
-            {loading ? (
-              <span className="flex items-center justify-center gap-2">
-                <svg className="animate-spin w-5 h-5" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                </svg>
-                {isLogin ? 'Signing in...' : 'Creating account...'}
-              </span>
-            ) : (isLogin ? 'Sign In' : 'Sign Up')}
-          </button>
-
-        </form>
-
-        <div className="mt-8 text-center">
-          <p className={`${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-            {isLogin ? "Don't have an account?" : "Already have an account?"}
-            <button 
-              onClick={() => setIsLogin(!isLogin)}
-              className="ml-2 font-bold text-indigo-500 hover:text-indigo-400 transition-colors"
-            >
-              {isLogin ? 'Sign up for free' : 'Sign in instead'}
-            </button>
-          </p>
         </div>
-
       </div>
     </div>
   );
-};
-
-export default Auth;
+}

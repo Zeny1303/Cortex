@@ -23,8 +23,9 @@ const MyInterviews = () => {
   const filtered = allInterviews.filter(inv => inv.id.toLowerCase().includes(searchTerm.toLowerCase()) || inv.role.toLowerCase().includes(searchTerm.toLowerCase()));
 
   return (
-    <div className={`flex h-screen overflow-hidden font-sans transition-colors duration-300 ${isDarkMode ? 'bg-[#121212]' : 'bg-[#FAFAFA]'}`}>
-      <Sidebar isDarkMode={isDarkMode} />
+    <div className={`flex min-h-screen flex-col font-sans transition-colors duration-300 bg-white dark:bg-black text-black dark:text-white`}>
+      <div className="flex flex-1 overflow-hidden">
+        <Sidebar isDarkMode={isDarkMode} />
       
       <div className="flex-1 flex flex-col overflow-hidden relative">
         <Navbar isDarkMode={isDarkMode} toggleTheme={toggleTheme} />
@@ -42,7 +43,7 @@ const MyInterviews = () => {
                 </p>
               </div>
               <button 
-                onClick={() => navigate('/booking')}
+                onClick={() => navigate('/select-type')}
                 className={`flex items-center gap-2 px-6 py-3 rounded-xl font-bold shadow-md transition-all transform hover:-translate-y-0.5 ${
                   isDarkMode ? 'bg-indigo-600 hover:bg-indigo-500 text-white' : 'bg-indigo-600 hover:bg-indigo-700 text-white'
                 }`}
@@ -135,6 +136,7 @@ const MyInterviews = () => {
 
           </div>
         </main>
+      </div>
       </div>
     </div>
   );

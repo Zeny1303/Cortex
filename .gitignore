@@ -1,4 +1,51 @@
+# ── IDE ──────────────────────────────────────────────────
+.vscode/
+.idea/
+*.code-workspace
 
+# ── GitHub Copilot / Codacy instructions ─────────────────
+.github/instructions/codacy.instructions.md
 
-#Ignore vscode AI rules
-.github\instructions\codacy.instructions.md
+# ── Python ───────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ── Virtual environments ──────────────────────────────────
+.env
+.venv
+venv/
+env/
+ENV/
+Backend/.prep/
+
+# ── Secrets — NEVER commit these ─────────────────────────
+Backend/.env
+*.env
+.env.*
+!.env.example
+!Backend/.env.example
+
+# ── Test / diagnostic artefacts ──────────────────────────
+Backend/e2e_report.json
+Backend/rooms/
+*.log
+
+# ── Frontend build output ─────────────────────────────────
+Frontend/build/
+Frontend/dist/
+Frontend/node_modules/
+
+# ── OS artefacts ─────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini

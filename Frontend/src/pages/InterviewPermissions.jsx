@@ -1,158 +1,276 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import BookingNavbar from '../layout/BookingNavbar';
-import { useTheme } from '../context/ThemeContext';
+import { ArrowRight, Camera, Mic, Wifi, Check, X, Loader } from 'lucide-react';
+import ThemeToggle from '../components/ThemeToggle';
 
-const InterviewPermissions = () => {
-  const { isDarkMode, toggleTheme } = useTheme();
-  const navigate = useNavigate();
-  const location = useLocation();
+function FlowBar({ step }) {
+  const steps = ['Setup', 'Permissions', 'Countdown', 'Interview'];
+  return (
+    <div className="border-b-2 border-black dark:border-white flex items-stretch h-14 bg-white dark:bg-black sticky top-0 z-40">
+      <a href="/"
+        className="flex items-center px-6 border-r-2 border-black dark:border-white
+                   font-black text-sm uppercase tracking-widest
+                   hover:bg-black hover:text-white
+                   dark:hover:bg-white dark:hover:text-black
+                   transition-colors duration-150">
+        CORTEX
+      </a>
+      <div className="flex items-stretch overflow-x-auto">
+        {steps.map((s, i) => {
+          const done    = i < step;
+          const current = i === step;
+          return (
+            <div key={s}
+              className={`flex items-center px-5 border-r-2 border-black dark:border-white text-[10px] font-black uppercase tracking-widest
+                ${current ? 'bg-black dark:bg-white text-white dark:text-black' : done ? 'bg-swiss-muted dark:bg-white/5 text-black/40 dark:text-white/40' : 'bg-white dark:bg-black text-black/20 dark:text-white/20'}`}>
+              <span className={`mr-2 ${current ? 'text-swiss-accent' : ''}`}>
+                {String(i + 1).padStart(2, '0')}.
+              </span>
+              {s}
+            </div>
+          );
+        })}
+      </div>
+      <div className="ml-auto">
+        <ThemeToggle variant="minimal" />
+      </div>
+    </div>
+  );
+}
+
+function StatusCell({ status }) {
+  if (status === 'pending') return (
+    <div className="w-7 h-7 border-2 border-black/20 dark:border-white/20 flex items-center justify-center">
+      <div className="w-2 h-2 bg-black/20 dark:bg-white/20" />
+    </div>
+  );
+  if (status === 'checking') return (
+    <div className="w-7 h-7 border-2 border-black dark:border-white flex items-center justify-center">
+      <Loader size={12} strokeWidth={3} className="animate-spin" />
+    </div>
+  );
+  if (status === 'ok') return (
+    <div className="w-7 h-7 border-2 border-black dark:border-white bg-black dark:bg-white flex items-center justify-center">
+      <Check size={12} strokeWidth={3} className="text-white dark:text-black" />
+    </div>
+  );
+  return (
+    <div className="w-7 h-7 border-2 border-swiss-accent bg-swiss-accent flex items-center justify-center">
+      <X size={12} strokeWidth={3} className="text-white" />
+    </div>
+  );
+}
+
+export default function InterviewPermissions() {
+  const navigate    = useNavigate();
+  const location    = useLocation();
   const interviewId = location.state?.interviewId || `INT-${Math.floor(Math.random() * 90000) + 10000}`;
   const questions   = location.state?.questions   || [];
+  const sessionId   = location.state?.sessionId   || null;
 
-  const [camStatus, setCamStatus] = useState('pending'); // pending, ok, error
+  // 🚨 VALIDATION: Redirect if critical data is missing
+  React.useEffect(() => {
+    if (!sessionId || !questions || questions.length === 0) {
+      console.error('❌ Missing sessionId or questions in InterviewPermissions');
+      alert('Session data is missing. Redirecting to setup...');
+      navigate('/interview/setup', { replace: true });
+    }
+  }, [sessionId, questions, navigate]);
+
+  const [camStatus, setCamStatus] = useState('pending');
   const [micStatus, setMicStatus] = useState('pending');
-  const [netStatus, setNetStatus] = useState('pending');
+  const [netStatus, setNetStatus] = useState('checking');
 
-  // Check network automatically
   useEffect(() => {
     let mounted = true;
     setTimeout(() => {
-      if (mounted) {
-        if (navigator.onLine) setNetStatus('ok');
-        else setNetStatus('error');
-      }
-    }, 1000);
+      if (mounted) setNetStatus(navigator.onLine ? 'ok' : 'error');
+    }, 900);
     return () => { mounted = false; };
   }, []);
 
   const requestCamera = async () => {
+    setCamStatus('checking');
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      if (stream) {
-        setCamStatus('ok');
-        // Stop stream after testing
-        stream.getTracks().forEach(track => track.stop());
-      }
-    } catch (err) {
-      console.error("Camera access denied", err);
+      const s = await navigator.mediaDevices.getUserMedia({ video: true });
+      s.getTracks().forEach((t) => t.stop());
+      setCamStatus('ok');
+    } catch {
       setCamStatus('error');
     }
   };
 
   const requestMic = async () => {
+    setMicStatus('checking');
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      if (stream) {
-        setMicStatus('ok');
-        // Stop stream after testing
-        stream.getTracks().forEach(track => track.stop());
-      }
-    } catch (err) {
-      console.error("Mic access denied", err);
+      const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+      s.getTracks().forEach((t) => t.stop());
+      setMicStatus('ok');
+    } catch {
       setMicStatus('error');
     }
   };
 
   const allClear = camStatus === 'ok' && micStatus === 'ok' && netStatus === 'ok';
 
-  const StatusIcon = ({ status }) => {
-    if (status === 'pending') return <div className="w-6 h-6 rounded-full border-2 border-dashed border-gray-400 opacity-50"></div>;
-    if (status === 'ok') return <svg className="w-6 h-6 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>;
-    return <svg className="w-6 h-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>;
-  };
+  const checks = [
+    {
+      key:    'camera',
+      icon:   <Camera size={16} strokeWidth={2.5} />,
+      label:  'Camera Access',
+      status: camStatus,
+      sub: camStatus === 'pending'   ? null
+         : camStatus === 'checking'  ? 'Requesting access...'
+         : camStatus === 'ok'        ? 'Connected successfully'
+         :                             'Access denied — check browser settings',
+      action: camStatus === 'pending' ? { label: 'Enable Camera', fn: requestCamera } : null,
+    },
+    {
+      key:    'mic',
+      icon:   <Mic size={16} strokeWidth={2.5} />,
+      label:  'Microphone Access',
+      status: micStatus,
+      sub: micStatus === 'pending'   ? null
+         : micStatus === 'checking'  ? 'Requesting access...'
+         : micStatus === 'ok'        ? 'Connected successfully'
+         :                             'Access denied — check browser settings',
+      action: micStatus === 'pending' ? { label: 'Enable Microphone', fn: requestMic } : null,
+    },
+    {
+      key:    'net',
+      icon:   <Wifi size={16} strokeWidth={2.5} />,
+      label:  'Network Connection',
+      status: netStatus,
+      sub: netStatus === 'checking' ? 'Checking connection...'
+         : netStatus === 'ok'       ? 'Connection stable'
+         :                            'No internet connection detected',
+      action: null,
+    },
+  ];
 
   return (
-    <div className={`min-h-screen font-sans flex flex-col transition-colors duration-300 ${isDarkMode ? 'bg-[#121212]' : 'bg-gray-50'}`}>
-      <BookingNavbar isDarkMode={isDarkMode} toggleTheme={toggleTheme} />
-      
-      <div className="flex-1 flex items-center justify-center p-6">
-        <div className={`max-w-xl w-full p-10 rounded-3xl shadow-lg border text-center ${
-          isDarkMode ? 'bg-[#1a1a1a] border-[#2d2d2d]' : 'bg-white border-gray-100'
-        }`}>
-          <div className={`w-20 h-20 mx-auto rounded-full flex items-center justify-center mb-6 ${
-            isDarkMode ? 'bg-indigo-900/30 text-indigo-400' : 'bg-indigo-50 text-indigo-600'
-          }`}>
-            <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
-          </div>
-          
-          <h2 className={`text-3xl font-extrabold mb-8 tracking-tight ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
-            Prepare for Your Interview
-          </h2>
+    <div className="min-h-screen bg-white dark:bg-black text-black dark:text-white swiss-noise relative flex flex-col">
+      <FlowBar step={1} />
 
-          <div className="space-y-4 mb-10">
-            {/* Camera Check */}
-            <div className={`flex items-center justify-between p-5 rounded-2xl border ${isDarkMode ? 'bg-[#212121] border-[#2d2d2d]' : 'bg-gray-50 border-gray-200'}`}>
-              <div className="flex items-center gap-4">
-                <div className={`p-3 rounded-xl ${isDarkMode ? 'bg-[#2d2d2d] text-gray-300' : 'bg-white text-gray-700 shadow-sm'}`}>
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
-                </div>
-                <div className="text-left flex-1 min-w-0 pr-4">
-                  <p className={`font-bold ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>Camera access</p>
-                  {camStatus === 'pending' ? (
-                    <button onClick={requestCamera} className="text-indigo-500 hover:text-indigo-600 text-sm font-semibold mt-1 transition-colors">Enable Camera</button>
-                  ) : (
-                    <p className={`text-sm truncate ${isDarkMode ? 'text-gray-500' : 'text-gray-500'}`}>
-                      {camStatus === 'ok' ? 'Connected successfully' : 'Access denied'}
-                    </p>
-                  )}
-                </div>
-              </div>
-              <StatusIcon status={camStatus} />
-            </div>
+      {/* Page header */}
+      <div className="border-b-2 border-black dark:border-white px-6 lg:px-16 py-10 swiss-grid-pattern bg-swiss-muted dark:bg-white/5">
+        <span className="text-swiss-accent text-xs font-black uppercase tracking-widest">
+          02. Permissions
+        </span>
+        <h1 className="mt-2 font-black uppercase tracking-tighter leading-none
+                       text-[clamp(2.5rem,6vw,5rem)]">
+          SYSTEM<br />CHECK.
+        </h1>
+      </div>
 
-            {/* Mic Check */}
-            <div className={`flex items-center justify-between p-5 rounded-2xl border ${isDarkMode ? 'bg-[#212121] border-[#2d2d2d]' : 'bg-gray-50 border-gray-200'}`}>
-              <div className="flex items-center gap-4">
-                <div className={`p-3 rounded-xl ${isDarkMode ? 'bg-[#2d2d2d] text-gray-300' : 'bg-white text-gray-700 shadow-sm'}`}>
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path></svg>
-                </div>
-                <div className="text-left flex-1 min-w-0 pr-4">
-                  <p className={`font-bold ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>Microphone access</p>
-                  {micStatus === 'pending' ? (
-                    <button onClick={requestMic} className="text-indigo-500 hover:text-indigo-600 text-sm font-semibold mt-1 transition-colors">Enable Microphone</button>
-                  ) : (
-                    <p className={`text-sm truncate ${isDarkMode ? 'text-gray-500' : 'text-gray-500'}`}>
-                      {micStatus === 'ok' ? 'Connected successfully' : 'Access denied'}
-                    </p>
-                  )}
-                </div>
-              </div>
-              <StatusIcon status={micStatus} />
-            </div>
+      {/* Content */}
+      <div className="flex-1 grid grid-cols-1 lg:grid-cols-12">
 
-            {/* Network Check */}
-            <div className={`flex items-center justify-between p-5 rounded-2xl border ${isDarkMode ? 'bg-[#212121] border-[#2d2d2d]' : 'bg-gray-50 border-gray-200'}`}>
-              <div className="flex items-center gap-4">
-                <div className={`p-3 rounded-xl ${isDarkMode ? 'bg-[#2d2d2d] text-gray-300' : 'bg-white text-gray-700 shadow-sm'}`}>
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.14 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0"></path></svg>
-                </div>
-                <div className="text-left">
-                  <p className={`font-bold ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>Stable internet connection</p>
-                  <p className={`text-sm ${isDarkMode ? 'text-gray-500' : 'text-gray-500'}`}>
-                    {netStatus === 'pending' ? 'Checking connection...' : netStatus === 'ok' ? 'Connection stable' : 'Offline'}
-                  </p>
-                </div>
-              </div>
-              <StatusIcon status={netStatus} />
-            </div>
+        {/* Left: checks */}
+        <div className="lg:col-span-7 border-b-2 lg:border-b-0 lg:border-r-2 border-black dark:border-white p-6 lg:p-16">
+          <div className="flex items-center gap-3 mb-8">
+            <span className="text-swiss-accent text-xs font-black uppercase tracking-widest">01.</span>
+            <span className="text-xs font-black uppercase tracking-widest">Device Checks</span>
+            <div className="flex-1 h-px bg-black dark:bg-white" />
           </div>
 
-          <button 
-            onClick={() => navigate('/interview/countdown', { state: { interviewId, questions } })}
-            disabled={!allClear}
-            className={`w-full py-4 rounded-xl font-bold text-lg shadow-md transition-transform ${
-              !allClear 
-                ? (isDarkMode ? 'bg-gray-800 text-gray-500 cursor-not-allowed' : 'bg-gray-300 text-gray-500 cursor-not-allowed')
-                : (isDarkMode ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-500/20 transform hover:-translate-y-0.5' : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-600/20 transform hover:-translate-y-0.5')
-            }`}
-          >
-            Start Interview
-          </button>
+          <div className="border-2 border-black dark:border-white">
+            {checks.map((c, i) => (
+              <div key={c.key}
+                className={`flex items-center justify-between px-6 py-5
+                  ${i < checks.length - 1 ? 'border-b-2 border-black dark:border-white' : ''}
+                  ${c.status === 'ok' ? 'bg-swiss-muted dark:bg-white/5' : 'bg-white dark:bg-black'}`}>
+
+                <div className="flex items-center gap-5">
+                  {/* Icon cell */}
+                  <div className={`w-10 h-10 border-2 flex items-center justify-center flex-shrink-0
+                    ${c.status === 'ok'    ? 'border-black dark:border-white bg-black dark:bg-white text-white dark:text-black'
+                    : c.status === 'error' ? 'border-swiss-accent text-swiss-accent'
+                    :                        'border-black dark:border-white text-black dark:text-white'}`}>
+                    {c.icon}
+                  </div>
+
+                  <div>
+                    <p className="text-sm font-black uppercase tracking-tight text-black dark:text-white">{c.label}</p>
+                    {c.sub && (
+                      <p className={`text-[10px] font-bold uppercase tracking-widest mt-0.5
+                        ${c.status === 'error' ? 'text-swiss-accent' : 'text-black/40 dark:text-white/40'}`}>
+                        {c.sub}
+                      </p>
+                    )}
+                    {c.action && (
+                      <button
+                        onClick={c.action.fn}
+                        className="mt-1 text-[10px] font-black uppercase tracking-widest
+                                   underline hover:text-swiss-accent transition-colors duration-150"
+                      >
+                        {c.action.label} →
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <StatusCell status={c.status} />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Right: CTA */}
+        <div className="lg:col-span-5 flex flex-col">
+          <div className="flex-1 p-6 lg:p-16 swiss-dots bg-swiss-muted dark:bg-white/5 flex flex-col justify-between">
+            <div>
+              <span className="text-swiss-accent text-xs font-black uppercase tracking-widest">
+                02. Status
+              </span>
+
+              {/* Progress indicators */}
+              <div className="mt-6 space-y-0 border-2 border-black dark:border-white bg-white dark:bg-black">
+                {checks.map((c, i) => (
+                  <div key={c.key}
+                    className={`flex items-center justify-between px-5 py-3
+                      ${i < checks.length - 1 ? 'border-b-2 border-black dark:border-white' : ''}`}>
+                    <span className="text-[10px] font-black uppercase tracking-widest text-black/40 dark:text-white/40">
+                      {c.label}
+                    </span>
+                    <span className={`text-[10px] font-black uppercase tracking-widest
+                      ${c.status === 'ok'       ? 'text-black dark:text-white'
+                      : c.status === 'error'    ? 'text-swiss-accent'
+                      : c.status === 'checking' ? 'text-black/40 dark:text-white/40'
+                      :                           'text-black/20 dark:text-white/20'}`}>
+                      {c.status === 'ok'       ? '✓ OK'
+                     : c.status === 'error'    ? '✗ Failed'
+                     : c.status === 'checking' ? '...'
+                     :                           'Pending'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              {!allClear && (
+                <p className="mt-4 text-[10px] font-bold uppercase tracking-widest text-black/40 dark:text-white/40">
+                  Enable all devices to continue.
+                </p>
+              )}
+            </div>
+
+            <button
+              onClick={() => navigate('/interview/countdown', { state: { interviewId, questions, sessionId } })}
+              disabled={!allClear}
+              className="mt-10 w-full h-14 flex items-center justify-between px-6
+                         bg-black dark:bg-white text-white dark:text-black text-xs font-black uppercase tracking-widest
+                         border-2 border-black dark:border-white
+                         hover:bg-swiss-accent hover:border-swiss-accent
+                         dark:hover:bg-swiss-accent dark:hover:border-swiss-accent dark:hover:text-white
+                         disabled:opacity-30 disabled:cursor-not-allowed
+                         transition-colors duration-150"
+            >
+              <span>Start Interview</span>
+              <ArrowRight size={16} strokeWidth={3} />
+            </button>
+          </div>
         </div>
       </div>
     </div>
   );
-};
-
-export default InterviewPermissions;
+}

@@ -1,177 +1,242 @@
-import os
+"""
+ai_interviewer_service.py
+
+All Groq LLM calls for the voice interview pipeline.
+
+Changes vs original
+-------------------
+* ask_followup  — history now includes the AI's own previous responses
+  (ai_response field), giving the model full conversational context.
+* System prompts tightened for concise spoken-word responses (no markdown,
+  no bullet points — output is read aloud by Polly).
+* _build_history_text() is a shared helper so every function formats history
+  consistently.
+* Groq client is created once per function call but the async context is
+  light enough that this is fine; swap for a module-level singleton if you
+  measure contention.
+"""
+
 import json
 import logging
-from typing import List, Dict, Any
+from typing import Any, Dict, List
+
 from groq import AsyncGroq
+
 from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
+# ── Model selection ───────────────────────────────────────────────────────────
+
+def _model() -> str:
+    return getattr(settings, "AI_MODEL", None) or "llama3-8b-8192"
+
+
+# ── Groq client factory ───────────────────────────────────────────────────────
+
 async def _get_groq_client() -> AsyncGroq:
-    # Use GROQ_API_KEY per user request
-    api_key = os.getenv("GROQ_API_KEY")
+    api_key = settings.GROQ_API_KEY
     if not api_key:
-        logger.error("GROQ_API_KEY environment variable is not set.")
-        raise ValueError("GROQ_API_KEY is missing from the environment")
+        logger.error("GROQ_API_KEY is not set.")
+        raise ValueError("GROQ_API_KEY missing from environment")
     return AsyncGroq(api_key=api_key)
 
+
+# ── Shared history formatter ──────────────────────────────────────────────────
+
+def _build_history_text(conversation_history: List[Dict[str, str]]) -> str:
+    """
+    Render full conversation history as a readable transcript.
+
+    Each turn stores:
+        { "question": str, "answer": str, "ai_response": str }
+
+    We include all three fields so the model has complete context of what it
+    already asked, what the candidate answered, and what it said next.
+    """
+    lines = []
+    for turn in conversation_history:
+        q = turn.get("question", "").strip()
+        a = turn.get("answer", "").strip()
+        r = turn.get("ai_response", "").strip()
+        if q:
+            lines.append(f"Interviewer: {q}")
+        if a:
+            lines.append(f"Candidate:   {a}")
+        if r:
+            lines.append(f"Interviewer: {r}")
+    return "\n".join(lines)
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
+
 async def generate_intro() -> str:
-    """Returns greeting for interview start."""
+    """
+    Generate a short, spoken welcome message to kick off the interview.
+    Kept under 2 sentences so Polly can synthesise it quickly.
+    """
+    system_prompt = (
+        "You are a professional technical interviewer starting a mock software "
+        "engineering interview over voice. Generate a warm, concise greeting — "
+        "maximum two sentences. Do NOT use markdown, bullet points, or lists. "
+        "Your output will be read aloud, so write naturally spoken English only."
+    )
     try:
         client = await _get_groq_client()
-        system_prompt = (
-            "You are an expert technical interviewer. "
-            "Generate a brief, welcoming, and professional introductory greeting "
-            "to start a software engineering mock interview. Keep it under 2 sentences."
-        )
-        model = settings.AI_MODEL if hasattr(settings, 'AI_MODEL') else "llama3-8b-8192"
-        response = await client.chat.completions.create(
+        resp = await client.chat.completions.create(
+            model=_model(),
             messages=[{"role": "system", "content": system_prompt}],
-            model=model,
             temperature=0.7,
-            max_tokens=100
+            max_tokens=80,
         )
-        if response.choices and response.choices[0].message.content:
-            return response.choices[0].message.content.strip()
-        return "Hello! I am your AI interviewer today. Let's get started with your mock interview."
-    except Exception as e:
-        logger.error(f"Error generating intro: {e}", exc_info=True)
-        return "Hello! I am your AI interviewer today. Let's get started with your mock interview."
+        text = resp.choices[0].message.content.strip() if resp.choices else ""
+        return text or "Welcome to your mock interview. I'm your AI interviewer — let's get started."
+    except Exception as exc:
+        logger.error("[AI] generate_intro failed: %s", exc, exc_info=True)
+        return "Welcome to your mock interview. I'm your AI interviewer — let's get started."
 
 
-async def ask_followup(question: str, candidate_answer: str, conversation_history: List[Dict[str, str]]) -> str:
-    """Generate next interviewer question."""
+async def ask_followup(
+    question: str,
+    candidate_answer: str,
+    conversation_history: List[Dict[str, str]],
+) -> str:
+    """
+    Given what the candidate just said, generate the interviewer's next spoken
+    response.  This may be a follow-up question, a probe for clarification, or
+    a pivot to a new topic — whatever a real interviewer would say next.
+
+    Args:
+        question:             The question that was on the table for this turn.
+        candidate_answer:     What the candidate said (STT transcript).
+        conversation_history: All previous turns (question / answer / ai_response).
+
+    Returns:
+        A short, spoken-word response — typically one or two sentences.
+    """
+    system_prompt = (
+        "You are a senior software engineer conducting a real-time voice technical interview. "
+        "Your role is to guide the candidate naturally through the problem space.\n\n"
+        "Rules:\n"
+        "- Respond with exactly ONE question or short acknowledgement + question.\n"
+        "- Maximum 2 sentences. This is voice — be concise.\n"
+        "- Do NOT use markdown, bullet points, numbered lists, or code blocks.\n"
+        "- Do NOT repeat what the candidate said back to them verbatim.\n"
+        "- Probe for: approach clarity, time/space complexity, edge cases, trade-offs, "
+        "or ask them to explain a specific part of their answer.\n"
+        "- If the candidate is on the right track, acknowledge briefly and deepen.\n"
+        "- If the candidate seems lost, ask a guiding question — do not give the answer."
+    )
+
+    history_text = _build_history_text(conversation_history)
+
+    user_prompt = (
+        f"Conversation so far:\n{history_text}\n\n"
+        f"Current question on the table: {question}\n"
+        f"Candidate just said: {candidate_answer}\n\n"
+        "What do you say next as the interviewer? (spoken English only, 1-2 sentences)"
+    )
+
     try:
         client = await _get_groq_client()
-        
-        history_text = "\n".join(
-            [f"Interviewer: {turn.get('question', '')}\nCandidate: {turn.get('answer', '')}" for turn in conversation_history]
-        )
-        
-        system_prompt = (
-            "You are a senior software engineer conducting a coding interview. "
-            "Based on the original question, the candidate's latest answer, and the conversation history, "
-            "ask a single, short professional follow-up question. "
-            "Focus on: approach clarity, time complexity, edge cases, and optimization. "
-            "Do not provide feedback; solely focus on asking the next question."
-        )
-        
-        user_prompt = (
-            f"Conversation History:\n{history_text}\n\n"
-            f"Current Question: {question}\n"
-            f"Candidate's Answer: {candidate_answer}"
-        )
-
-        model = settings.AI_MODEL if hasattr(settings, 'AI_MODEL') else "llama3-8b-8192"
-        response = await client.chat.completions.create(
+        resp = await client.chat.completions.create(
+            model=_model(),
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
+                {"role": "user", "content": user_prompt},
             ],
-            model=model,
-            temperature=0.7,
-            max_tokens=150
+            temperature=0.65,
+            max_tokens=120,
         )
-        if response.choices and response.choices[0].message.content:
-            return response.choices[0].message.content.strip()
-        return "Could you elaborate more on your previous point?"
-    except Exception as e:
-        logger.error(f"Error generating follow-up question: {e}", exc_info=True)
-        return "Could you elaborate more on your previous point?"
+        text = resp.choices[0].message.content.strip() if resp.choices else ""
+        return text or "Could you walk me through your reasoning on that last point?"
+    except Exception as exc:
+        logger.error("[AI] ask_followup failed: %s", exc, exc_info=True)
+        return "Could you walk me through your reasoning on that last point?"
 
 
 async def evaluate_answer(question: str, candidate_answer: str) -> str:
-    """Return reasoning feedback."""
+    """
+    Return constructive spoken feedback on a single answer.
+    Used at the end of each coding question before moving on.
+    """
+    system_prompt = (
+        "You are an expert technical interviewer giving brief verbal feedback. "
+        "Highlight one strength and one area for improvement. "
+        "Keep it under 3 sentences. No markdown, no lists — spoken English only."
+    )
+    user_prompt = f"Question: {question}\nCandidate answer: {candidate_answer}"
+
     try:
         client = await _get_groq_client()
-        
-        system_prompt = (
-            "You are an expert technical interviewer evaluating a candidate's answer. "
-            "Provide constructive feedback, highlighting what was done well and what "
-            "could be improved. Explain the reasoning clearly and concisely."
-        )
-        
-        user_prompt = (
-            f"Question: {question}\n"
-            f"Answer: {candidate_answer}"
-        )
-
-        model = settings.AI_MODEL if hasattr(settings, 'AI_MODEL') else "llama3-8b-8192"
-        response = await client.chat.completions.create(
+        resp = await client.chat.completions.create(
+            model=_model(),
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
+                {"role": "user", "content": user_prompt},
             ],
-            model=model,
             temperature=0.3,
-            max_tokens=300
+            max_tokens=200,
         )
-        if response.choices and response.choices[0].message.content:
-            return response.choices[0].message.content.strip()
-        return "I was unable to fully evaluate that answer at the moment."
-    except Exception as e:
-        logger.error(f"Error evaluating answer: {e}", exc_info=True)
-        return "I was unable to fully evaluate that answer at the moment."
+        text = resp.choices[0].message.content.strip() if resp.choices else ""
+        return text or "Good effort on that one. Let's keep moving."
+    except Exception as exc:
+        logger.error("[AI] evaluate_answer failed: %s", exc, exc_info=True)
+        return "Good effort on that one. Let's keep moving."
 
 
-async def generate_final_report(conversation_history: List[Dict[str, str]], test_results: Dict[str, Any]) -> Dict[str, Any]:
-    """Return structured report: strengths, weaknesses, score, recommendation."""
+async def generate_final_report(
+    conversation_history: List[Dict[str, str]],
+    test_results: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Produce a structured JSON assessment report at the end of the session.
+
+    Returns a dict with keys: strengths, weaknesses, score, recommendation.
+    """
+    system_prompt = (
+        "You are an expert technical interviewer generating a final assessment. "
+        "Analyse the full conversation and test results then return ONLY a valid JSON "
+        "object — no markdown, no code fences — matching this exact schema:\n"
+        '{"strengths": ["..."], "weaknesses": ["..."], "score": <int 0-100>, '
+        '"recommendation": "..."}'
+    )
+
+    history_text = _build_history_text(conversation_history)
+    user_prompt = (
+        f"Full conversation transcript:\n{history_text}\n\n"
+        f"Code test results: {json.dumps(test_results)}"
+    )
+
     raw_output = ""
     try:
         client = await _get_groq_client()
-        
-        history_text = "\n".join(
-            [f"Q: {turn.get('question', '')}\nA: {turn.get('answer', '')}" for turn in conversation_history]
-        )
-        
-        system_prompt = (
-            "You are an expert technical interviewer generating a final assessment report. "
-            "Analyze the conversation history and test results provided. "
-            "Return a strictly valid JSON object with the following schema:\n"
-            "{\n"
-            '  "strengths": ["list of strings"],\n'
-            '  "weaknesses": ["list of strings"],\n'
-            '  "score": integer out of 100,\n'
-            '  "recommendation": "A short summary paragraph"\n'
-            "}\n"
-            "Do not output markdown code blocks (like ```json), just the raw JSON."
-        )
-        
-        user_prompt = (
-            f"Conversation History:\n{history_text}\n\n"
-            f"Test Results:\n{json.dumps(test_results)}\n"
-        )
-
-        model = settings.AI_MODEL if hasattr(settings, 'AI_MODEL') else "llama3-8b-8192"
-        response = await client.chat.completions.create(
+        resp = await client.chat.completions.create(
+            model=_model(),
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
+                {"role": "user", "content": user_prompt},
             ],
-            model=model,
-            temperature=0.2, # Low temperature for more structured JSON output
+            temperature=0.2,
             max_tokens=600,
-            response_format={"type": "json_object"}
+            response_format={"type": "json_object"},
         )
-        
-        if response.choices and response.choices[0].message.content:
-            raw_output = response.choices[0].message.content.strip()
+        if resp.choices:
+            raw_output = resp.choices[0].message.content.strip()
             return json.loads(raw_output)
-        else:
-            return _fallback_report()
-        
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse final report JSON: {e}\nRaw Output: {raw_output}")
         return _fallback_report()
-    except Exception as e:
-        logger.error(f"Error generating final report: {e}", exc_info=True)
+    except json.JSONDecodeError as exc:
+        logger.error("[AI] Final report JSON parse failed: %s\nRaw: %s", exc, raw_output)
+        return _fallback_report()
+    except Exception as exc:
+        logger.error("[AI] generate_final_report failed: %s", exc, exc_info=True)
         return _fallback_report()
 
 
 def _fallback_report() -> Dict[str, Any]:
     return {
-        "strengths": ["Attempted the interview prompts."],
-        "weaknesses": ["Unable to process detailed metrics due to service error."],
+        "strengths": ["Completed the interview session."],
+        "weaknesses": ["Unable to generate detailed metrics due to a service error."],
         "score": 0,
-        "recommendation": "Incomplete evaluation. Please review the raw transcript."
+        "recommendation": "Evaluation incomplete. Please review the raw transcript manually.",
     }

@@ -1,147 +1,448 @@
-import React from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useTheme } from '../context/ThemeContext';
+import { useNavigate } from "react-router-dom";
+import Navbar from "../components/Navbar";
+import { ArrowRight, Plus, Code2, Mic, BarChart3, Zap } from "lucide-react";
 
-const Home = () => {
-  const { isDarkMode, toggleTheme } = useTheme();
+/* ─── Data ──────────────────────────────────────────────────────────────── */
+
+const STATS = [
+  { value: "2,400+", label: "Questions" },
+  { value: "98%",    label: "Accuracy"  },
+  { value: "12min",  label: "Avg. Session" },
+  { value: "4.9★",   label: "Rating"    },
+];
+
+const FEATURES = [
+  {
+    num: "01",
+    icon: <Mic size={20} strokeWidth={2} />,
+    title: "Voice Interview",
+    body: "Speak your answers aloud. AssemblyAI transcribes in real-time while our AI interviewer responds with natural follow-up questions.",
+  },
+  {
+    num: "02",
+    icon: <Code2 size={20} strokeWidth={2} />,
+    title: "Live Code Execution",
+    body: "Write, run, and submit code directly in the browser. Hidden test cases evaluate correctness without leaking solutions.",
+  },
+  {
+    num: "03",
+    icon: <BarChart3 size={20} strokeWidth={2} />,
+    title: "Structured Feedback",
+    body: "Every session ends with a scored report: approach quality, code correctness, communication clarity, and improvement areas.",
+  },
+  {
+    num: "04",
+    icon: <Zap size={20} strokeWidth={2} />,
+    title: "Adaptive Difficulty",
+    body: "Choose Easy, Medium, or Hard. The AI adjusts follow-up depth and evaluation criteria to match your target role.",
+  },
+];
+
+const PROCESS_STEPS = [
+  { n: "01", title: "Book a Slot",      body: "Pick a time that works. Slots are available 24/7 with instant confirmation." },
+  { n: "02", title: "Configure",        body: "Select difficulty, question count, and whether you want voice or text mode." },
+  { n: "03", title: "Interview",        body: "Face the AI interviewer. Answer questions, write code, defend your approach." },
+  { n: "04", title: "Review & Improve", body: "Get your score, read the AI report, and track progress over time." },
+];
+
+const QUESTION_TYPES = [
+  "Arrays & Hashing",
+  "Two Pointers",
+  "Sliding Window",
+  "Binary Search",
+  "Linked Lists",
+  "Trees & Graphs",
+  "Dynamic Programming",
+  "System Design",
+];
+
+/* ─── Sub-components ────────────────────────────────────────────────────── */
+
+function SectionLabel({ num, label }) {
+  return (
+    <div className="flex items-center gap-3 mb-8">
+      <span className="text-swiss-accent text-xs font-black uppercase tracking-widest">
+        {num}.
+      </span>
+      <span className="text-xs font-black uppercase tracking-widest text-black dark:text-white">
+        {label}
+      </span>
+      <div className="flex-1 h-px bg-black dark:bg-white" />
+    </div>
+  );
+}
+
+function StatCard({ value, label }) {
+  return (
+    <div className="group border-2 border-black dark:border-white p-8 bg-white dark:bg-black hover:bg-swiss-accent transition-colors duration-150 cursor-default">
+      <div className="flex items-start justify-between">
+        <span className="text-5xl font-black leading-none tracking-tighter group-hover:text-white transition-colors duration-150">
+          {value}
+        </span>
+        <Plus
+          size={16}
+          strokeWidth={3}
+          className="mt-1 group-hover:rotate-90 group-hover:text-white transition-all duration-200"
+        />
+      </div>
+      <p className="mt-3 text-xs font-bold uppercase tracking-widest text-black/50 dark:text-white/50 group-hover:text-white/70 transition-colors duration-150">
+        {label}
+      </p>
+    </div>
+  );
+}
+
+function FeatureCard({ num, icon, title, body }) {
+  return (
+    <article className="group border-2 border-black dark:border-white p-8 bg-white dark:bg-black hover:bg-black dark:hover:bg-white transition-colors duration-150">
+      <div className="flex items-center justify-between mb-6">
+        <span className="text-swiss-accent text-xs font-black uppercase tracking-widest">
+          {num}
+        </span>
+        <div className="w-9 h-9 border-2 border-black dark:border-white flex items-center justify-center group-hover:border-white dark:group-hover:border-black group-hover:text-white dark:group-hover:text-black transition-colors duration-150">
+          {icon}
+        </div>
+      </div>
+      <h3 className="text-xl font-black uppercase tracking-tight mb-3 group-hover:text-white dark:group-hover:text-black transition-colors duration-150">
+        {title}
+      </h3>
+      <p className="text-sm leading-relaxed text-black/60 dark:text-white/60 group-hover:text-white/70 dark:group-hover:text-black/70 transition-colors duration-150">
+        {body}
+      </p>
+    </article>
+  );
+}
+
+function ProcessStep({ n, title, body, isLast }) {
+  return (
+    <div className="flex gap-6">
+      {/* Timeline */}
+      <div className="flex flex-col items-center">
+        <div className="w-10 h-10 border-2 border-black dark:border-white flex items-center justify-center flex-shrink-0">
+          <span className="text-swiss-accent text-xs font-black">{n}</span>
+        </div>
+        {!isLast && <div className="flex-1 w-px bg-black dark:bg-white mt-2" />}
+      </div>
+      {/* Content */}
+      <div className="pb-10">
+        <h3 className="text-base font-black uppercase tracking-tight mb-1">{title}</h3>
+        <p className="text-sm text-black/60 dark:text-white/60 leading-relaxed">{body}</p>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Page ──────────────────────────────────────────────────────────────── */
+
+export default function Home() {
   const navigate = useNavigate();
 
   return (
-    <div className={`min-h-screen font-sans flex flex-col transition-colors duration-300 ${isDarkMode ? 'bg-[#0f1115] text-white' : 'bg-gray-50 text-gray-900'}`}>
-      
-      {/* Navbar */}
-      <nav className={`px-6 md:px-12 py-6 flex justify-between items-center ${isDarkMode ? 'bg-[#0f1115]/80 border-b border-gray-800' : 'bg-white/80 border-b border-gray-200'} backdrop-blur-md sticky top-0 z-50`}>
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white font-bold text-xl shadow-lg shadow-indigo-500/30">
-            A
+    <div className="min-h-screen bg-white dark:bg-black text-black dark:text-white overflow-x-hidden relative swiss-noise flex flex-col">
+      <Navbar />
+
+      {/* ══════════════════════════════════════════════════════
+          HERO
+      ══════════════════════════════════════════════════════ */}
+      <section className="min-h-screen border-b-2 border-black dark:border-white flex flex-col pt-14">
+
+        {/* Top rule */}
+        <div className="border-b-2 border-black dark:border-white px-6 lg:px-12 py-3 flex items-center gap-4">
+          <span className="text-swiss-accent text-xs font-black uppercase tracking-widest">
+            AI Interview Platform
+          </span>
+          <div className="w-2 h-2 bg-swiss-accent" />
+          <span className="text-xs font-bold uppercase tracking-widest text-black/40 dark:text-white/40">
+            v2.0 — Now with Voice Mode
+          </span>
+        </div>
+
+        {/* Main hero grid */}
+        <div className="flex-1 grid grid-cols-1 lg:grid-cols-12">
+
+          {/* Left: headline */}
+          <div className="lg:col-span-8 border-b-2 lg:border-b-0 lg:border-r-2 border-black dark:border-white
+                          flex flex-col justify-end p-6 lg:p-12 swiss-grid-pattern">
+            <p className="swiss-reveal swiss-reveal-1 text-xs font-black uppercase tracking-widest text-black/40 dark:text-white/40 mb-6">
+              Turn Panic Into Performance
+            </p>
+
+            <h1 className="swiss-reveal swiss-reveal-2 font-black uppercase leading-none tracking-tighter
+                           text-[clamp(3.5rem,10vw,10rem)]">
+              MASTER<br />
+              <span className="text-swiss-accent">THE</span><br />
+              INTERVIEW.
+            </h1>
+
+            <div className="swiss-reveal swiss-reveal-3 mt-10 flex flex-col sm:flex-row gap-0">
+              <button
+                onClick={() => navigate("/interview/setup")}
+                className="flex items-center justify-center gap-3 h-14 px-10
+                           bg-black dark:bg-white text-white dark:text-black text-sm font-black uppercase tracking-widest
+                           border-2 border-black dark:border-white
+                           hover:bg-swiss-accent hover:border-swiss-accent
+                           dark:hover:bg-swiss-accent dark:hover:border-swiss-accent dark:hover:text-white
+                           transition-colors duration-150"
+              >
+                Start Interview
+                <ArrowRight size={16} strokeWidth={3} />
+              </button>
+              <button
+                onClick={() => navigate("/select-type")}
+                className="flex items-center justify-center gap-3 h-14 px-10
+                           bg-white dark:bg-black text-black dark:text-white text-sm font-black uppercase tracking-widest
+                           border-2 border-black dark:border-white border-l-0 sm:border-l-0
+                           hover:bg-swiss-muted dark:hover:bg-white/10
+                           transition-colors duration-150"
+              >
+                Book a Slot
+              </button>
+            </div>
           </div>
-          <span className="font-extrabold text-xl tracking-tight">AI Interview</span>
-        </div>
-        
-        <div className="flex items-center gap-6">
-          <button 
-            onClick={toggleTheme}
-            className={`p-2 rounded-full transition-colors ${isDarkMode ? 'hover:bg-gray-800 text-gray-400' : 'hover:bg-gray-100 text-gray-500'}`}
-            aria-label="Toggle Theme"
-          >
-            {isDarkMode ? (
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
-            ) : (
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" /></svg>
-            )}
-          </button>
-          <div className="hidden md:flex gap-2">
-            <button 
-              onClick={() => navigate('/login')}
-              className={`px-5 py-2 rounded-lg font-semibold transition-colors ${
-                isDarkMode ? 'hover:bg-gray-800 text-gray-300' : 'hover:bg-gray-100 text-gray-600'
-              }`}
-            >
-              Log in
-            </button>
-            <button 
-              onClick={() => navigate('/signup')} 
-              className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-semibold shadow-md shadow-indigo-500/30 transition-all transform hover:-translate-y-0.5"
-            >
-              Sign up free
-            </button>
+
+          {/* Right: geometric composition + stats */}
+          <div className="lg:col-span-4 flex flex-col">
+
+            {/* Bauhaus composition */}
+            <div className="flex-1 relative overflow-hidden swiss-dots bg-swiss-muted dark:bg-white/5 border-b-2 border-black dark:border-white min-h-[240px]">
+              {/* Large circle */}
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2
+                              w-48 h-48 rounded-full border-4 border-black dark:border-white" />
+              {/* Red filled square */}
+              <div className="absolute top-8 right-8 w-16 h-16 bg-swiss-accent" />
+              {/* Horizontal rule */}
+              <div className="absolute top-1/2 left-0 right-0 h-0.5 bg-black dark:bg-white" />
+              {/* Vertical rule */}
+              <div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-black dark:bg-white" />
+              {/* Small dot */}
+              <div className="absolute bottom-10 left-10 w-6 h-6 bg-black dark:bg-white rounded-full" />
+              {/* Label */}
+              <span className="absolute bottom-4 right-4 text-[10px] font-black uppercase tracking-widest text-black/30 dark:text-white/30">
+                Cortex / 2025
+              </span>
+            </div>
+
+            {/* Stats 2×2 */}
+            <div className="grid grid-cols-2">
+              {STATS.map((s, i) => (
+                <div
+                  key={s.label}
+                  className={`
+                    group p-6 border-black dark:border-white cursor-default
+                    hover:bg-swiss-accent transition-colors duration-150
+                    ${i % 2 === 0 ? "border-r-2" : ""}
+                    ${i < 2 ? "border-b-2" : ""}
+                    ${i === 0 ? "border-t-2" : ""}
+                  `}
+                >
+                  <div className="text-3xl font-black tracking-tighter leading-none group-hover:text-white transition-colors duration-150">
+                    {s.value}
+                  </div>
+                  <div className="mt-1 text-[10px] font-bold uppercase tracking-widest text-black/40 dark:text-white/40 group-hover:text-white/70 transition-colors duration-150">
+                    {s.label}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
-      </nav>
+      </section>
 
-      {/* Hero Section */}
-      <main className="flex-1 flex flex-col items-center justify-center text-center px-6 py-20 lg:py-32 relative overflow-hidden">
-        {/* Background Gradients */}
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-indigo-500/20 blur-[120px] rounded-full pointer-events-none -z-10"></div>
-        <div className="absolute bottom-0 right-0 w-[600px] h-[400px] bg-blue-500/10 blur-[100px] rounded-full pointer-events-none -z-10"></div>
+      {/* ══════════════════════════════════════════════════════
+          01. WHAT IS CORTEX
+      ══════════════════════════════════════════════════════ */}
+      <section id="features" className="border-b-2 border-black dark:border-white">
+        <div className="grid grid-cols-1 lg:grid-cols-12">
 
-        <h1 className="text-5xl md:text-7xl font-black tracking-tight mb-8 max-w-4xl leading-tight">
-          Master your next interview with <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-500 to-cyan-400">AI precision</span>.
-        </h1>
-        
-        <p className={`text-xl md:text-2xl mb-12 max-w-2xl font-light ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-          Practice real-world technical and behavioral questions in a fully immersive mock interview environment. Get instant, actionable feedback.
-        </p>
+          {/* Sticky label column */}
+          <div className="lg:col-span-4 border-b-2 lg:border-b-0 lg:border-r-2 border-black dark:border-white
+                          p-6 lg:p-12 swiss-diagonal bg-swiss-muted dark:bg-white/5">
+            <SectionLabel num="01" label="System" />
+            <h2 className="text-4xl lg:text-5xl font-black uppercase tracking-tighter leading-none">
+              WHAT IS<br />CORTEX?
+            </h2>
+            <div className="mt-8 w-12 h-1 bg-swiss-accent" />
+          </div>
 
-        <div className="flex flex-col sm:flex-row gap-4 mb-20">
-          <button 
-            onClick={() => navigate('/signup')} 
-            className="px-8 py-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold text-lg shadow-lg shadow-indigo-600/30 transition-all transform hover:-translate-y-1 flex items-center justify-center gap-2"
-          >
-            Start Practicing Now
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path></svg>
-          </button>
-          <button 
-            onClick={() => navigate('/login')} 
-            className={`px-8 py-4 rounded-xl font-bold text-lg border-2 transition-all flex items-center justify-center ${
-              isDarkMode ? 'border-gray-700 text-gray-300 hover:bg-gray-800' : 'border-gray-300 text-gray-700 hover:bg-gray-100'
-            }`}
-          >
-            Member Login
-          </button>
+          {/* Content */}
+          <div className="lg:col-span-8 p-6 lg:p-12">
+            <p className="text-lg lg:text-xl leading-relaxed text-black/70 dark:text-white/70 max-w-2xl">
+              Cortex is an AI-powered interview preparation platform built to simulate
+              real technical interviews — not passive problem solving. You practice under
+              pressure, defend your approach, and receive structured feedback that
+              actually improves your performance.
+            </p>
+            <p className="mt-6 text-lg lg:text-xl leading-relaxed text-black/70 dark:text-white/70 max-w-2xl">
+              From curated question sets like Blind 75 to live mock sessions with voice
+              interaction and performance analytics, Cortex identifies your weaknesses
+              and builds the confidence that shows up on interview day.
+            </p>
+
+            {/* Inline stat row */}
+            <div className="mt-12 flex flex-wrap gap-0 border-t-2 border-black dark:border-white pt-8">
+              {[
+                ["Blind 75", "Included"],
+                ["LeetCode-style", "Execution"],
+                ["AI Feedback", "Every Session"],
+              ].map(([title, sub]) => (
+                <div key={title} className="pr-10 mr-10 border-r-2 border-black dark:border-white last:border-r-0 last:mr-0 mb-4">
+                  <div className="text-sm font-black uppercase tracking-tight">{title}</div>
+                  <div className="text-xs text-black/40 dark:text-white/40 font-bold uppercase tracking-widest mt-0.5">{sub}</div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
+      </section>
 
-        {/* Feature Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto text-left w-full mt-10">
-          {[
-            {
-              title: "Realistic AI Avatars",
-              desc: "Talk to human-like AI interviewers that adapt to your responses in real-time.",
-              icon: "M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
-            },
-            {
-              title: "Comprehensive Code Editor",
-              desc: "Solve algorithmic challenges directly in the browser with our integrated IDE.",
-              icon: "M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"
-            },
-            {
-              title: "Detailed Analytics",
-              desc: "Receive an immediate, structured breakdown of your performance after every session.",
-              icon: "M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
-            }
-          ].map((feature, idx) => (
-            <div key={idx} className={`p-8 rounded-3xl border transition-colors ${
-              isDarkMode ? 'bg-[#1a1d24] border-gray-800' : 'bg-white border-gray-200 shadow-sm'
-            }`}>
-              <div className="w-12 h-12 rounded-xl bg-indigo-500/10 text-indigo-500 flex items-center justify-center mb-6">
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d={feature.icon}></path></svg>
-              </div>
-              <h3 className="text-xl font-bold mb-3">{feature.title}</h3>
-              <p className={isDarkMode ? 'text-gray-400' : 'text-gray-600'}>{feature.desc}</p>
+      {/* ══════════════════════════════════════════════════════
+          02. FEATURES
+      ══════════════════════════════════════════════════════ */}
+      <section id="method" className="border-b-2 border-black dark:border-white p-6 lg:p-12">
+        <SectionLabel num="02" label="Features" />
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-0 border-2 border-black dark:border-white">
+          {FEATURES.map((f, i) => (
+            <div
+              key={f.num}
+              className={`${i < FEATURES.length - 1 ? "border-r-0 sm:border-r-2 border-b-2 sm:border-b-0 border-black dark:border-white" : ""}`}
+            >
+              <FeatureCard {...f} />
             </div>
           ))}
         </div>
-      </main>
+      </section>
 
-      {/* Footer */}
-      <footer className={`py-12 border-t mt-auto ${isDarkMode ? 'bg-[#0f1115] border-gray-800' : 'bg-white border-gray-200'}`}>
-        <div className="max-w-6xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-6">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center text-white font-bold text-sm">
-              A
+      {/* ══════════════════════════════════════════════════════
+          03. PROCESS
+      ══════════════════════════════════════════════════════ */}
+      <section className="border-b-2 border-black dark:border-white">
+        <div className="grid grid-cols-1 lg:grid-cols-12">
+
+          {/* Process steps */}
+          <div className="lg:col-span-7 border-b-2 lg:border-b-0 lg:border-r-2 border-black dark:border-white p-6 lg:p-12">
+            <SectionLabel num="03" label="Method" />
+            <div className="mt-2">
+              {PROCESS_STEPS.map((step, i) => (
+                <ProcessStep
+                  key={step.n}
+                  {...step}
+                  isLast={i === PROCESS_STEPS.length - 1}
+                />
+              ))}
             </div>
-            <span className="font-bold tracking-tight">AI Interview Platform</span>
           </div>
-          
-          <div className={`flex flex-wrap items-center justify-center gap-6 text-sm font-medium ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-            <a href="mailto:snehakashyap9920@gmail.com" className="hover:text-indigo-500 transition-colors flex items-center gap-2">
-              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z"></path><path d="M18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z"></path></svg>
-              snehakashyap9920@gmail.com
-            </a>
-            <a href="https://www.linkedin.com/in/sneha-kashyap1309" target="_blank" rel="noopener noreferrer" className="hover:text-indigo-500 transition-colors flex items-center gap-2">
-              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M19 0h-14c-2.761 0-5 2.239-5 5v14c0 2.761 2.239 5 5 5h14c2.762 0 5-2.239 5-5v-14c0-2.761-2.238-5-5-5zm-11 19h-3v-11h3v11zm-1.5-12.268c-.966 0-1.75-.79-1.75-1.764s.784-1.764 1.75-1.764 1.75.79 1.75 1.764-.783 1.764-1.75 1.764zm13.5 12.268h-3v-5.604c0-3.368-4-3.113-4 0v5.604h-3v-11h3v1.765c1.396-2.586 7-2.777 7 2.476v6.759z"/></svg>
-              LinkedIn
-            </a>
-            <a href="https://github.com/Zeny1303" target="_blank" rel="noopener noreferrer" className="hover:text-indigo-500 transition-colors flex items-center gap-2">
-              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
-              GitHub.com/Zeny1303
-            </a>
+
+          {/* Question types sidebar */}
+          <div className="lg:col-span-5 p-6 lg:p-12 swiss-dots bg-swiss-muted dark:bg-white/5">
+            <SectionLabel num="03b" label="Question Bank" />
+            <ul className="space-y-0 border-t-2 border-black dark:border-white">
+              {QUESTION_TYPES.map((q) => (
+                <li
+                  key={q}
+                  className="group flex items-center justify-between
+                             border-b-2 border-black dark:border-white py-4
+                             hover:bg-black hover:text-white
+                             dark:hover:bg-white dark:hover:text-black
+                             px-2 -mx-2 transition-colors duration-150 cursor-default"
+                >
+                  <span className="text-sm font-bold uppercase tracking-wide group-hover:text-white dark:group-hover:text-black transition-colors duration-150">
+                    {q}
+                  </span>
+                  <ArrowRight
+                    size={14}
+                    strokeWidth={3}
+                    className="text-black/30 dark:text-white/30 group-hover:text-swiss-accent transition-colors duration-150"
+                  />
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      {/* ══════════════════════════════════════════════════════
+          04. CTA BANNER
+      ══════════════════════════════════════════════════════ */}
+      <section className="border-b-2 border-black dark:border-white bg-black dark:bg-white text-white dark:text-black p-6 lg:p-12 swiss-grid-pattern">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-end">
+          <div className="lg:col-span-8">
+            <span className="text-swiss-accent text-xs font-black uppercase tracking-widest">
+              04. Start Now
+            </span>
+            <h2 className="mt-4 font-black uppercase tracking-tighter leading-none
+                           text-[clamp(3rem,8vw,7rem)] text-white dark:text-black">
+              READY TO<br />
+              <span className="text-swiss-accent">PERFORM?</span>
+            </h2>
+          </div>
+          <div className="lg:col-span-4 flex flex-col gap-3">
+            <button
+              onClick={() => navigate("/interview/setup")}
+              className="flex items-center justify-between h-14 px-8
+                         bg-swiss-accent text-white text-sm font-black uppercase tracking-widest
+                         border-2 border-swiss-accent
+                         hover:bg-white hover:text-black hover:border-white
+                         dark:hover:bg-black dark:hover:text-white dark:hover:border-black
+                         transition-colors duration-150"
+            >
+              Start Interview
+              <ArrowRight size={16} strokeWidth={3} />
+            </button>
+            <button
+              onClick={() => navigate("/signup")}
+              className="flex items-center justify-between h-14 px-8
+                         bg-transparent text-white dark:text-black text-sm font-black uppercase tracking-widest
+                         border-2 border-white dark:border-black
+                         hover:bg-white hover:text-black
+                         dark:hover:bg-black dark:hover:text-white
+                         transition-colors duration-150"
+            >
+              Create Account
+              <ArrowRight size={16} strokeWidth={3} />
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* ══════════════════════════════════════════════════════
+          FOOTER
+      ══════════════════════════════════════════════════════ */}
+      <footer className="border-t-2 border-black dark:border-white">
+        <div className="grid grid-cols-1 lg:grid-cols-12">
+
+          {/* Brand */}
+          <div className="lg:col-span-4 border-b-2 lg:border-b-0 lg:border-r-2 border-black dark:border-white p-6 lg:p-10">
+            <div className="text-2xl font-black uppercase tracking-widest">CORTEX</div>
+            <p className="mt-3 text-xs text-black/50 dark:text-white/50 leading-relaxed max-w-xs">
+              AI-powered mock interview platform. Practice. Perform. Prevail.
+            </p>
+          </div>
+
+          {/* Links */}
+          <div className="lg:col-span-4 border-b-2 lg:border-b-0 lg:border-r-2 border-black dark:border-white p-6 lg:p-10">
+            <div className="text-xs font-black uppercase tracking-widest mb-4 text-black/40 dark:text-white/40">Platform</div>
+            {["Dashboard", "Interview Setup", "Question Bank", "My Interviews"].map((l) => (
+              <div key={l} className="text-sm font-bold uppercase tracking-wide py-1.5 hover:text-swiss-accent cursor-pointer transition-colors duration-150">
+                {l}
+              </div>
+            ))}
+          </div>
+
+          {/* Legal */}
+          <div className="lg:col-span-4 p-6 lg:p-10">
+            <div className="text-xs font-black uppercase tracking-widest mb-4 text-black/40 dark:text-white/40">Legal</div>
+            {["Privacy Policy", "Terms of Service", "Cookie Policy"].map((l) => (
+              <div key={l} className="text-sm font-bold uppercase tracking-wide py-1.5 hover:text-swiss-accent cursor-pointer transition-colors duration-150">
+                {l}
+              </div>
+            ))}
+            <div className="mt-8 text-xs text-black/30 dark:text-white/30 font-bold uppercase tracking-widest">
+              © 2025 Cortex
+            </div>
           </div>
         </div>
       </footer>
-
     </div>
   );
-};
-
-export default Home;
+}

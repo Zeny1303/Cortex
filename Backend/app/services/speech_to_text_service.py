@@ -1,122 +1,194 @@
-import os
-import json
-import base64
+"""
+speech_to_text_service.py
+
+Transcribes candidate audio using AssemblyAI's REST API.
+
+Why REST instead of the streaming WebSocket?
+--------------------------------------------
+The original implementation opened a brand-new AssemblyAI WebSocket for
+every single audio chunk, paid the SessionBegins handshake cost (~1-2 s)
+on every turn, then immediately tore it down.  For a conversational
+interview — where each "chunk" is a complete candidate answer — the REST
+Upload → Transcript → Poll pattern is simpler, more reliable, and just as
+fast (AssemblyAI typically returns a result in 2-4 s for clips under 60 s).
+
+Flow
+----
+1. FFmpeg converts incoming audio (any format/rate) to 16-bit 16 kHz mono PCM.
+2. The PCM bytes are uploaded to AssemblyAI's /v2/upload endpoint.
+3. A transcript job is created via POST /v2/transcript.
+4. We poll GET /v2/transcript/{id} with exponential back-off until the status
+   is "completed" or "error".
+5. The final text is returned; empty string on any failure.
+"""
+
 import asyncio
 import logging
-import websockets
-from websockets.exceptions import WebSocketException
+import subprocess
+
+import httpx
+
+from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
-ASSEMBLYAI_WS_URL = "wss://api.assemblyai.com/v2/realtime/ws?sample_rate=16000"
+# ── Constants ────────────────────────────────────────────────────────────────
+
+_ASSEMBLYAI_BASE = "https://api.assemblyai.com/v2"
+
+# Maximum wall-clock seconds we will wait for a transcript job to complete.
+# 99 % of clips under 2 min finish in < 10 s.
+_TRANSCRIPT_TIMEOUT_S = 45
+
+# How long to wait between status polls (doubles each time, capped at 3 s)
+_POLL_INITIAL_INTERVAL_S = 0.5
+_POLL_MAX_INTERVAL_S = 3.0
+
+
+# ── Audio conversion ─────────────────────────────────────────────────────────
+
+async def _convert_to_pcm(audio_bytes: bytes) -> bytes:
+    """
+    Convert any incoming audio format to raw 16-bit 16 kHz mono PCM using
+    ffmpeg.  Returns b"" on failure.
+    """
+    try:
+        process = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-y",
+            "-i", "pipe:0",
+            "-f", "s16le",
+            "-acodec", "pcm_s16le",
+            "-ar", "16000",
+            "-ac", "1",
+            "pipe:1",
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        stdout_data, stderr_data = await asyncio.wait_for(
+            process.communicate(input=audio_bytes),
+            timeout=15.0,
+        )
+        if process.returncode != 0:
+            logger.error("FFmpeg conversion failed: %s", stderr_data.decode(errors="replace"))
+            return b""
+        return stdout_data
+    except asyncio.TimeoutError:
+        logger.error("FFmpeg conversion timed out.")
+        return b""
+    except Exception as exc:
+        logger.error("Error during audio conversion: %s", exc)
+        return b""
+
+
+# ── Main public API ───────────────────────────────────────────────────────────
 
 async def transcribe_audio(audio_bytes: bytes) -> str:
     """
-    Transcribes an audio chunk using AssemblyAI's Streaming (Real-time) API.
+    Transcribe a complete audio chunk (one candidate turn) and return the text.
 
     Args:
-        audio_bytes (bytes): The raw audio binary data to transcribe.
+        audio_bytes: Raw audio bytes in any format that ffmpeg can decode
+                     (webm, opus, wav, mp4, etc.).
 
     Returns:
-        str: The final transcribed text for the given chunk. 
-             Returns an empty string on error or if no speech is detected.
+        Transcribed text string, or "" on silence / error.
     """
-    # 1. Handle empty audio
     if not audio_bytes:
-        logger.warning("Received empty audio chunk in transcribe_audio. Skipping.")
+        logger.warning("[STT] Received empty audio chunk — skipping.")
         return ""
 
-    # Ensure we have the API key
-    api_key = os.getenv("ASSEMBLYAI_API_KEY")
+    api_key = settings.ASSEMBLYAI_API_KEY
     if not api_key:
-        logger.error("ASSEMBLYAI_API_KEY environment variable is not set.")
-        raise ValueError("ASSEMBLYAI_API_KEY is missing from the environment")
+        logger.error("[STT] ASSEMBLYAI_API_KEY is not set.")
+        raise ValueError("ASSEMBLYAI_API_KEY missing from environment")
+
+    # Step 1 — Convert to PCM
+    pcm_bytes = await _convert_to_pcm(audio_bytes)
+    if not pcm_bytes:
+        logger.error("[STT] PCM conversion produced no output — skipping transcription.")
+        return ""
 
     headers = {
-        "Authorization": api_key
+        "authorization": api_key,
+        "content-type": "application/octet-stream",
     }
 
-    try:
-        # Establish a WebSocket connection per request
-        # We use a 10s open timeout, and tight ping intervals to maintain stability
-        async with websockets.connect(
-            ASSEMBLYAI_WS_URL,
-            extra_headers=headers,
-            open_timeout=10,
-            ping_interval=5,
-            ping_timeout=20
-        ) as ws:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
 
-            # 2. Wait for SessionBegins from AssemblyAI API
+        # Step 2 — Upload raw PCM
+        try:
+            upload_resp = await client.post(
+                f"{_ASSEMBLYAI_BASE}/upload",
+                headers=headers,
+                content=pcm_bytes,
+            )
+            upload_resp.raise_for_status()
+            upload_url: str = upload_resp.json()["upload_url"]
+            logger.info("[STT] Audio uploaded successfully.")
+        except Exception as exc:
+            logger.error("[STT] Upload failed: %s", exc)
+            return ""
+
+        # Step 3 — Create transcript job
+        try:
+            tx_resp = await client.post(
+                f"{_ASSEMBLYAI_BASE}/transcript",
+                headers={
+                    "authorization": api_key,
+                    "content-type": "application/json",
+                },
+                json={
+                    "audio_url": upload_url,
+                    # Ask AssemblyAI to filter out silence/filler before returning
+                    "filter_profanity": False,
+                    "punctuate": True,
+                    "format_text": True,
+                },
+            )
+            tx_resp.raise_for_status()
+            tx_id: str = tx_resp.json()["id"]
+            logger.info("[STT] Transcript job created: %s", tx_id)
+        except Exception as exc:
+            logger.error("[STT] Transcript job creation failed: %s", exc)
+            return ""
+
+        # Step 4 — Poll for completion with exponential back-off
+        poll_url = f"{_ASSEMBLYAI_BASE}/transcript/{tx_id}"
+        poll_headers = {"authorization": api_key}
+        elapsed = 0.0
+        interval = _POLL_INITIAL_INTERVAL_S
+
+        while elapsed < _TRANSCRIPT_TIMEOUT_S:
+            await asyncio.sleep(interval)
+            elapsed += interval
+            # Exponential back-off, capped
+            interval = min(interval * 1.5, _POLL_MAX_INTERVAL_S)
+
             try:
-                session_start_msg = await asyncio.wait_for(ws.recv(), timeout=5.0)
-                session_start_data = json.loads(session_start_msg)
-                
-                if session_start_data.get("message_type") != "SessionBegins":
-                    logger.error(f"Failed to start AssemblyAI session. Response: {session_start_data}")
-                    return ""
-            except asyncio.TimeoutError:
-                logger.error("Timeout waiting for AssemblyAI SessionBegins.")
+                poll_resp = await client.get(poll_url, headers=poll_headers)
+                poll_resp.raise_for_status()
+                data = poll_resp.json()
+            except Exception as exc:
+                logger.warning("[STT] Poll request failed (will retry): %s", exc)
+                continue
+
+            status = data.get("status")
+            logger.debug("[STT] Job %s status: %s (elapsed %.1fs)", tx_id, status, elapsed)
+
+            if status == "completed":
+                text = (data.get("text") or "").strip()
+                if text:
+                    logger.info("[STT] Transcript ready (%d chars): %r", len(text), text[:80])
+                else:
+                    logger.info("[STT] Transcript completed but text is empty (silence).")
+                return text
+
+            if status == "error":
+                logger.error("[STT] AssemblyAI error for job %s: %s", tx_id, data.get("error"))
                 return ""
 
-            # 3. Send the audio chunk
-            # AssemblyAI requires audio data to be base64-encoded strings
-            audio_data_b64 = base64.b64encode(audio_bytes).decode('utf-8')
-            payload = {
-                "audio_data": audio_data_b64
-            }
-            await ws.send(json.dumps(payload))
+            # status is "queued" or "processing" — keep polling
 
-            # Send the termination command immediately to complete transcription for this single chunk
-            terminate_payload = {"terminate_session": True}
-            await ws.send(json.dumps(terminate_payload))
-
-            # 4. Receive and accumulate transcripts
-            transcript_text = []
-
-            while True:
-                try:
-                    # Using a 10-second timeout to bound the total processing time
-                    message_str = await asyncio.wait_for(ws.recv(), timeout=10.0)
-                    message = json.loads(message_str)
-
-                    message_type = message.get("message_type")
-
-                    if message_type == "SessionTerminated":
-                        logger.debug("AssemblyAI session terminated successfully.")
-                        break
-
-                    elif message_type == "FinalTranscript":
-                        text = message.get("text", "")
-                        if text:
-                            transcript_text.append(text)
-
-                    elif message_type == "Error":
-                        error_msg = message.get("error")
-                        logger.error(f"AssemblyAI processing error: {error_msg}")
-                        break
-
-                    # We can safely ignore PartialTranscript as we wait for FinalTranscript
-                    elif message_type == "PartialTranscript":
-                        pass
-                    
-                    else:
-                        pass # Ignore unhandled message types
-
-                except asyncio.TimeoutError:
-                    logger.error("Timeout occurred while waiting for transcript from AssemblyAI.")
-                    break
-
-            # 5. Return transcript text
-            return " ".join(transcript_text).strip()
-
-    # Handling connection errors and timeouts at the connection level
-    except asyncio.TimeoutError:
-        logger.error("Connection attempt to AssemblyAI timed out.")
-        return ""
-    except WebSocketException as e:
-        logger.error(f"WebSocket connection error with AssemblyAI: {e}")
-        return ""
-    except Exception as e:
-        logger.error(f"Unexpected error in transcribe_audio: {e}", exc_info=True)
+        logger.error("[STT] Transcript job %s timed out after %ss.", tx_id, _TRANSCRIPT_TIMEOUT_S)
         return ""

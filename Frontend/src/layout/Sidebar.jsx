@@ -17,7 +17,7 @@ const Sidebar = ({ isDarkMode, activeView, setActiveView }) => {
 
   const navItems = [
     { name: 'Dashboard', path: '/dashboard', view: 'overview', icon: Icons.Dashboard },
-    { name: 'Book AI Interview', path: '/booking', icon: Icons.BookInterview },
+    { name: 'Book AI Interview', path: '/select-type', icon: Icons.BookInterview },
     { name: 'Start Interview', path: '/interview/setup', icon: Icons.StartInterview },
     { name: 'Evaluation Reports', path: '#reports', view: 'evaluations', icon: Icons.Reports },
     { name: 'Leaderboard', path: '#leaderboard', view: 'leaderboard', icon: Icons.Leaderboard },

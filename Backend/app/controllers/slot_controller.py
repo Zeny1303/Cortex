@@ -1,16 +1,14 @@
 from uuid import uuid4
 from bson import ObjectId
 from fastapi import HTTPException
-from app.models.slot_model import SlotCreate, SlotResponse
 from datetime import datetime
 
 
-async def create_slot(slot_data: SlotCreate, db):
+async def create_slot(slot_data, current_user, db):  # ← current_user added
     slots_collection = db["slots"]
-    # ... Validation logic ...
-    
+
     new_slot = {
-        "createdBy": slot_data.createdBy, # Assuming this comes from slot_data or current_user
+        "createdBy": str(current_user["_id"]),  # ← from JWT, not request body
         "startTime": slot_data.startTime,
         "endTime": slot_data.endTime,
         "duration": slot_data.duration,
@@ -20,10 +18,10 @@ async def create_slot(slot_data: SlotCreate, db):
         "roomId": None,
         "created_at": datetime.utcnow()
     }
-    
+
     result = await slots_collection.insert_one(new_slot)
-    
     created_slot = await slots_collection.find_one({"_id": result.inserted_id})
+
     return {
         "id": str(created_slot["_id"]),
         "createdBy": created_slot["createdBy"],
@@ -37,11 +35,12 @@ async def create_slot(slot_data: SlotCreate, db):
         "created_at": created_slot["created_at"]
     }
 
+
 async def get_all_slots(db):
     slots_collection = db["slots"]
     slots_cursor = slots_collection.find()
     slots = await slots_cursor.to_list(length=100)
-    
+
     return [
         {
             "id": str(slot["_id"]),
@@ -57,6 +56,7 @@ async def get_all_slots(db):
         }
         for slot in slots
     ]
+
 
 async def book_slot(slot_id, current_user, db):
     slots_collection = db["slots"]
@@ -85,7 +85,10 @@ async def book_slot(slot_id, current_user, db):
         "message": "Slot booked successfully",
         "slot": slot
     }
-async def get_available_slots():
+
+
+async def get_available_slots(db):
+    slots_collection = db["slots"]
 
     slots = await slots_collection.find({"isBooked": False}).to_list(None)
 
@@ -94,7 +97,10 @@ async def get_available_slots():
         slot["_id"] = str(slot["_id"])
 
     return slots
-async def get_my_booked_slots(current_user):
+
+
+async def get_my_booked_slots(current_user, db):
+    slots_collection = db["slots"]
 
     slots = await slots_collection.find({
         "bookedBy": str(current_user["_id"])
@@ -106,7 +112,9 @@ async def get_my_booked_slots(current_user):
 
     return slots
 
-async def cancel_slot(slot_id, current_user):
+
+async def cancel_slot(slot_id, current_user, db):
+    slots_collection = db["slots"]
 
     slot = await slots_collection.find_one({"_id": ObjectId(slot_id)})
 
@@ -119,18 +127,24 @@ async def cancel_slot(slot_id, current_user):
     await slots_collection.delete_one({"_id": ObjectId(slot_id)})
 
     return {"message": "Slot cancelled successfully"}
-from bson import ObjectId
 
-async def cancel_slot(slot_id, current_user):
 
-    slot = await slots_collection.find_one({"_id": ObjectId(slot_id)})
+async def get_created_and_booked_slots(current_user, db):
+    slots_collection = db["slots"]
+    user_id = str(current_user["_id"])
 
-    if not slot:
-        raise HTTPException(status_code=404, detail="Slot not found")
+    created_cursor = slots_collection.find({"createdBy": user_id})
+    created_slots = await created_cursor.to_list(None)
 
-    if slot["createdBy"] != str(current_user["_id"]):
-        raise HTTPException(status_code=403, detail="Not authorized")
+    booked_cursor = slots_collection.find({"bookedBy": user_id})
+    booked_slots = await booked_cursor.to_list(None)
 
-    await slots_collection.delete_one({"_id": ObjectId(slot_id)})
+    def serialize(slot):
+        slot["id"] = str(slot["_id"])
+        slot["_id"] = str(slot["_id"])
+        return slot
 
-    return {"message": "Slot cancelled successfully"}
+    return {
+        "created": [serialize(s) for s in created_slots],
+        "booked":  [serialize(s) for s in booked_slots]
+    }

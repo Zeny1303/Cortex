@@ -1,14 +1,30 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useRef, useEffect } from 'react';
+import { Mic, Square } from 'lucide-react';
 
+/**
+ * VoiceRecorder
+ *
+ * Records a complete candidate answer and sends the full audio blob
+ * via onAudioChunk once the user stops recording.
+ *
+ * Key fixes vs previous version:
+ * 1. Stream tracks are stopped INSIDE onstop (after MediaRecorder has
+ *    flushed all data) — not before — so the final chunk is never lost.
+ * 2. All collected chunks are merged into one ArrayBuffer in onstop and
+ *    sent as a single binary frame. The backend expects one complete audio
+ *    blob per turn, not a stream of small chunks.
+ * 3. mimeType falls back gracefully when audio/webm is unsupported.
+ */
 const VoiceRecorder = ({ onAudioChunk, isRecording, setIsRecording }) => {
-  const [mediaRecorder, setMediaRecorder] = useState(null);
-  const streamRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const streamRef        = useRef(null);
+  const chunksRef        = useRef([]);   // accumulate all Blob chunks here
 
+  // Cleanup on unmount
   useEffect(() => {
-    // Cleanup function when component unmounts
     return () => {
       if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
+        streamRef.current.getTracks().forEach((t) => t.stop());
       }
     };
   }, []);
@@ -17,65 +33,88 @@ const VoiceRecorder = ({ onAudioChunk, isRecording, setIsRecording }) => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
-      
-      // Use timeSlice (e.g., 2000ms) to chunk audio at regular intervals or send on stop
-      // For this implementation, we will chunk every 3 seconds to stream to the backend
-      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-      
-      recorder.ondataavailable = async (event) => {
-        if (event.data.size > 0 && onAudioChunk) {
-          // Convert Blob to ArrayBuffer/Bytes to send over WebSocket
-          const buffer = await event.data.arrayBuffer();
-          onAudioChunk(buffer);
+      chunksRef.current = [];
+
+      // Pick the best supported mimeType
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/webm')
+          ? 'audio/webm'
+          : '';   // let the browser choose
+
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      mediaRecorderRef.current = recorder;
+
+      // Collect chunks as they arrive (no timeslice = one chunk on stop, which is fine)
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          chunksRef.current.push(e.data);
         }
       };
 
-      recorder.start(3000); // Send chunk every 3 seconds
-      setMediaRecorder(recorder);
+      // onstop fires AFTER the final ondataavailable — safe to merge + send here
+      recorder.onstop = async () => {
+        // Stop mic tracks now that the recorder has finished
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach((t) => t.stop());
+          streamRef.current = null;
+        }
+
+        const chunks = chunksRef.current;
+        chunksRef.current = [];
+
+        if (chunks.length === 0) {
+          console.warn('[VoiceRecorder] No audio chunks collected');
+          return;
+        }
+
+        // Merge all chunks into one Blob then convert to ArrayBuffer
+        const blob = new Blob(chunks, { type: chunks[0].type || 'audio/webm' });
+        console.log(`[VoiceRecorder] Sending ${blob.size} bytes of audio`);
+
+        try {
+          const buf = await blob.arrayBuffer();
+          if (buf.byteLength > 0 && onAudioChunk) {
+            onAudioChunk(buf);
+          }
+        } catch (err) {
+          console.error('[VoiceRecorder] Failed to convert blob to ArrayBuffer:', err);
+        }
+      };
+
+      recorder.start();   // no timeslice — one clean blob on stop
       setIsRecording(true);
     } catch (err) {
-      console.error("Error accessing microphone:", err);
-      alert("Could not access microphone. Please check your permissions.");
+      console.error('[VoiceRecorder] Microphone access error:', err);
     }
   };
 
   const stopRecording = () => {
-    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-      mediaRecorder.stop();
-      setIsRecording(false);
-      
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
-      }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      // stop() triggers ondataavailable (final flush) then onstop
+      mediaRecorderRef.current.stop();
     }
+    // NOTE: stream tracks are stopped inside onstop, not here
+    setIsRecording(false);
   };
 
-  const toggleRecording = () => {
-    if (isRecording) {
-      stopRecording();
-    } else {
-      startRecording();
-    }
-  };
+  const toggle = () => (isRecording ? stopRecording() : startRecording());
 
   return (
-    <div className="flex flex-col items-center mt-4">
-      <button
-        onClick={toggleRecording}
-        className={`px-6 py-3 rounded-full font-semibold text-white shadow-md transition-all duration-300 ${
-          isRecording 
-            ? 'bg-red-500 hover:bg-red-600 animate-pulse' 
-            : 'bg-indigo-600 hover:bg-indigo-700'
-        }`}
-      >
-        {isRecording ? '⏹ Stop & Send Audio' : '🎙 Start Answering'}
-      </button>
-      {isRecording && (
-        <span className="text-sm text-gray-400 mt-2">
-          Recording... (Sending chunks every 3s)
-        </span>
-      )}
-    </div>
+    <button
+      onClick={toggle}
+      className={`flex items-center gap-2 h-8 px-4
+                  text-[10px] font-black uppercase tracking-widest border-2
+                  transition-colors duration-150
+                  ${isRecording
+                    ? 'bg-swiss-accent border-swiss-accent text-white hover:bg-black hover:border-black'
+                    : 'bg-white border-black text-black hover:bg-black hover:text-white'}`}
+      title={isRecording ? 'Stop recording' : 'Start answering'}
+    >
+      {isRecording
+        ? <><Square size={10} strokeWidth={3} /> Stop</>
+        : <><Mic    size={10} strokeWidth={2.5} /> Answer</>}
+    </button>
   );
 };
 

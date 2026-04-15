@@ -1,5 +1,20 @@
 import { API_URL } from '../config';
 
+const extractError = (data) => {
+  if (!data) return "Something went wrong";
+
+  if (typeof data.detail === "string") return data.detail;
+
+  if (Array.isArray(data.detail)) {
+    return data.detail.map(err => err.msg || err).join(", ");
+  }
+
+  if (typeof data.detail === "object") {
+    return Object.values(data.detail).flat().join(", ");
+  }
+
+  return data.message || "Something went wrong";
+};
 const login = async (email, password) => {
   const response = await fetch(`${API_URL}/api/auth/login`, {
     method: 'POST',
@@ -12,7 +27,7 @@ const login = async (email, password) => {
   const data = await response.json();
 
   if (!response.ok) {
-    throw new Error(data.detail || data.message || 'Login failed');
+  throw new Error(extractError(data));
   }
 
   if (data.access_token) {
@@ -34,7 +49,7 @@ const signup = async (name, email, password) => {
   const data = await response.json();
 
   if (!response.ok) {
-    throw new Error(data.detail || data.message || 'Signup failed');
+  throw new Error(extractError(data));
   }
 
   return data;
@@ -55,7 +70,7 @@ const getMe = async () => {
   const data = await response.json();
 
   if (!response.ok) {
-    throw new Error(data.detail || data.message || 'Failed to fetch user data');
+  throw new Error(extractError(data));
   }
 
   // /api/auth/me returns a flat user object {id, name, email, skills, ...}

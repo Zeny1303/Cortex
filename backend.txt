@@ -1,0 +1,564 @@
+================================================================================
+CORTEX — BACKEND DEEP DIVE (INTERVIEW PREPARATION GUIDE)
+================================================================================
+
+--------------------------------------------------------------------------------
+1. 30-SECOND PROJECT EXPLANATION
+--------------------------------------------------------------------------------
+
+Cortex is a real-time AI-powered mock interview platform built with FastAPI.
+The backend does three things:
+
+  1. Session management — creates interview sessions, tracks which question
+     the candidate is on, runs their code against hidden test cases, and
+     scores the session at the end.
+
+  2. Voice pipeline — candidate speaks → AssemblyAI transcribes → Groq LLaMA
+     generates a follow-up question → Amazon Polly converts to MP3 audio,
+     all over a single WebSocket in under 5 seconds per turn.
+
+  3. Auth, question management, and a secondary WebSocket for real-time code
+     collaboration.
+
+Stack: FastAPI + MongoDB (Motor async) + Groq + AssemblyAI + Amazon Polly.
+Everything is async — no blocking I/O in the hot path.
+
+
+--------------------------------------------------------------------------------
+2. IMPORTANT FILES AND WHAT EACH DOES
+--------------------------------------------------------------------------------
+
+app/main.py
+  The entry point. Does four things:
+  - Registers all routers with URL prefixes (e.g. auth_router → /api/auth)
+  - Adds CORS middleware allowing localhost:3000 and localhost:5173
+  - Uses asynccontextmanager lifespan to connect MongoDB on startup and
+    disconnect on shutdown
+  - Spawns a background asyncio.Task that calls cleanup_rooms() every hour
+  Also hosts the /ws/{room_id} WebSocket directly (not via a router) for
+  the code collaboration feature.
+
+app/config/settings.py
+  Single Pydantic BaseSettings class that reads from .env. Required fields
+  (MONGO_URI, JWT_SECRET) cause an immediate crash at startup if missing —
+  this is intentional so you never run with a broken config. Optional fields
+  (GROQ_API_KEY, ASSEMBLYAI_API_KEY, AWS keys) are typed Optional[str] = None
+  so the app starts without them but the relevant service raises ValueError
+  when actually called.
+
+app/database/mongodb.py
+  Wraps Motor's AsyncIOMotorClient. connect_to_mongo() runs an admin ping
+  to verify connectivity at startup — without this, Motor connects lazily
+  and you'd only discover a broken connection on the first real query.
+  get_database() is a FastAPI Depends() that raises HTTP 503 if db is None,
+  giving a clean error instead of a cryptic AttributeError.
+
+app/middleware/auth_middleware.py
+  get_current_user() is a FastAPI Depends() used on every protected route.
+  Flow: extract Bearer token → verify_access_token() decodes JWT → find_one
+  in MongoDB users collection by ObjectId. The live DB lookup is important:
+  it means deleted users are rejected even if their token hasn't expired.
+  The user dict is attached to request.state.user for downstream use.
+
+app/services/session_manager.py
+  In-memory singleton dict {session_id: InterviewSessionModel} protected by
+  asyncio.Lock. All mutations acquire the lock before touching the dict.
+  Lazy cleanup runs on every create_session call — sessions older than 1 hour
+  are deleted. This is the only stateful component in the system.
+
+app/services/interview_engine.py
+  Stateless orchestrator for the interview state machine. Owns the
+  STAGE_TRANSITIONS dict:
+    INTRO → QUESTION → APPROACH_DISCUSSION → CODING → TESTING → NEXT_QUESTION → END
+  start_interview() fetches questions, creates a session, advances to QUESTION.
+  submit_code() validates stage is CODING before running tests.
+  advance_stage() handles the NEXT_QUESTION branch — more questions → QUESTION,
+  no more → END. end_interview() scores, persists to MongoDB, removes from memory.
+
+app/services/code_execution_service.py
+  The most security-sensitive file. Runs candidate Python code against hidden
+  test cases using exec() with a restricted builtins whitelist. Two AST passes
+  before execution: syntax check and forbidden import check (blocks os, sys,
+  subprocess, socket, and 20+ others). Each test case runs in
+  asyncio.wait_for(loop.run_in_executor(None, fn), timeout=5.0). Test case
+  inputs/outputs are never sent to the frontend.
+
+app/services/voice_interview_service.py
+  Orchestrates one complete voice turn: STT → LLM → TTS. Returns a typed
+  VoiceTurnResult dataclass (not raw bytes) so the WebSocket router can make
+  clean decisions. Per-step timeouts: STT 50s, LLM 15s, TTS 15s. Conversation
+  history is appended BEFORE TTS so a TTS failure doesn't lose the turn.
+
+app/services/ai_interviewer_service.py
+  All Groq API calls. Four functions:
+  - generate_intro()        greeting, 80 tokens, temp 0.7
+  - ask_followup()          next question, 120 tokens, temp 0.65
+  - evaluate_answer()       per-question feedback, 200 tokens, temp 0.3
+  - generate_final_report() structured JSON, 600 tokens, temp 0.2,
+                            response_format=json_object
+  System prompts forbid markdown because output goes directly to Polly TTS.
+
+app/services/speech_to_text_service.py
+  AssemblyAI REST API (not streaming). Flow:
+  ffmpeg converts audio to 16kHz mono PCM → POST /v2/upload → POST
+  /v2/transcript → poll GET /v2/transcript/{id} with exponential back-off
+  (0.5s → 3s cap, 45s total timeout).
+
+app/services/tts_service.py
+  Amazon Polly neural Matthew voice. Text is sanitised (strips markdown
+  artefacts that Polly would read literally). Blocking boto3 call runs in
+  asyncio.to_thread(). Client cached as module-level singleton.
+
+app/services/question_service.py
+  sanitize_question() strips test_cases from every question document before
+  returning it. get_random_questions() uses MongoDB $sample aggregation for
+  true random selection.
+
+app/services/auth_service.py
+  create_user() hashes password with bcrypt, inserts UserModel to MongoDB.
+  authenticate_user() finds user by email, verifies bcrypt hash, returns JWT.
+  get_user_by_id() strips password fields before returning user data.
+
+app/routers/voice_interview_router.py
+  The WebSocket endpoint at /ws/interview/{session_id}. Handles JWT auth on
+  connect, generates greeting, then loops receiving binary audio chunks and
+  routing them through process_voice_turn(). Sends typed JSON events
+  (connected, greeting_text, user_text, ai_text, processing, silence,
+  tts_unavailable, error, end) and binary MP3 frames.
+
+app/utils/jwt_handler.py
+  create_access_token() requires user_id and email — raises ValueError if
+  either is missing. verify_access_token() distinguishes ExpiredSignatureError
+  from generic JWTError to return different HTTP 401 messages.
+
+app/utils/security.py
+  Two functions: hash_password() and verify_password() using passlib bcrypt.
+  CryptContext handles algorithm migration automatically.
+
+app/utils/room_storage.py
+  Persists code collaboration room state to flat .txt files in /rooms directory.
+  save_code() and load_code() — simple file I/O, no database overhead for
+  ephemeral collaborative sessions.
+
+app/models/interview_model.py
+  InterviewSessionModel — the MongoDB document shape for a session.
+  InterviewStage enum (inherits str so it serialises as "CODING" not an int).
+  QuestionRef — lightweight embedded reference (id, title, difficulty, tags).
+  ConversationMessage — role + content + timestamp.
+  to_mongo() uses by_alias=True so session_id maps to MongoDB _id.
+
+app/schemas/interview_schema.py
+  API boundary schemas separate from DB models:
+  - InterviewStartRequest: difficulty + question_count with validators
+  - InterviewActionRequest: action + optional code/message
+  - InterviewSessionResponse: session_id + stage + optional QuestionOut
+  - CodeSubmitResponse: result + passed/failed/total counts
+  - EndInterviewResponse: score + feedback_summary
+
+
+--------------------------------------------------------------------------------
+3. CORE API ENDPOINTS AND THEIR PURPOSE
+--------------------------------------------------------------------------------
+
+AUTH  (prefix: /api/auth)
+  POST /signup          Register. Validates email uniqueness, hashes password,
+                        inserts UserModel, returns success message.
+  POST /login           Authenticate. Verifies bcrypt hash, returns JWT.
+  GET  /me              Returns current user profile (strips password fields).
+  POST /logout          Stateless — returns success (JWT invalidation is
+                        client-side; no server-side token blacklist).
+
+QUESTIONS  (prefix: /api/questions)
+  GET  /                List all questions (lightweight — no description/test_cases).
+                        Supports ?difficulty=medium&category=array filters.
+  GET  /random          Fetch N random questions by difficulty using $sample.
+                        Used by interview setup to load session questions.
+  GET  /{question_id}   Single question by snake_case _id (e.g. "two_sum").
+                        Returns full description + starter_code, no test_cases.
+  NOTE: Route order matters — /random must be declared before /{question_id}
+  or "random" gets matched as a path parameter.
+
+INTERVIEW  (prefix: /api/interview)
+  POST /start                    Create session. Fetches questions, builds
+                                 InterviewSessionModel, advances to QUESTION.
+                                 Returns session_id + first question.
+  GET  /{session_id}/question    Current question with full description.
+                                 Checks session ownership (403 if wrong user).
+  POST /{session_id}/submit-code Run code against hidden test cases.
+                                 Validates stage == CODING first.
+                                 Returns pass/fail counts + feedback.
+  POST /{session_id}/next        Advance state machine one step.
+  POST /{session_id}/end         Score session, persist to MongoDB, clear memory.
+                                 Returns score + feedback_summary.
+
+CODE  (prefix: /api/code)
+  POST /execute         Ad-hoc code execution (uses mock CodeExecutor for now,
+                        not the real test-case runner). Used by frontend editor
+                        "Run" button for quick feedback without test cases.
+
+SLOTS  (prefix: /api/slots)
+  POST /create          Create an interview slot with time, duration, skills.
+  POST /book/{slot_id}  Book a slot. Validates: not own slot, not already
+                        booked, no time overlap. Generates roomId on success.
+  GET  /available       List unbooked slots.
+  GET  /booked          List slots booked by current user.
+  DELETE /cancel/{id}   Cancel a slot.
+
+WEBSOCKETS
+  WS /ws/interview/{session_id}?token=JWT
+                        Voice interview pipeline. Binary in (audio) →
+                        binary out (MP3) + JSON events.
+  WS /ws/{room_id}      Code collaboration. JSON events: join-room, signal,
+                        code-change. Persists code to rooms/{id}.txt.
+
+
+--------------------------------------------------------------------------------
+4. HOW REQUEST HANDLING IS IMPLEMENTED
+--------------------------------------------------------------------------------
+
+FastAPI uses dependency injection via Depends(). Every protected route has:
+
+  async def some_route(
+      current_user: dict = Depends(get_current_user),
+      db = Depends(get_database),
+  ):
+
+get_current_user() runs first — it extracts the Bearer token, decodes the JWT,
+and does a MongoDB lookup. If any step fails it raises HTTPException before
+the route handler even runs.
+
+get_database() returns the Motor db instance or raises HTTP 503 if MongoDB
+is unavailable.
+
+The router layer is thin — it validates the request schema (Pydantic does this
+automatically on the function signature), calls the service/engine, and returns
+a response model. No business logic lives in routers.
+
+Example — POST /api/interview/start:
+  1. Pydantic validates InterviewStartRequest body (difficulty, question_count)
+  2. get_current_user() runs — extracts user_id from JWT
+  3. get_database() runs — returns Motor db
+  4. interview_engine.start_interview(user_id, difficulty, count, db) called
+  5. Returns InterviewSessionResponse (Pydantic serialises it to JSON)
+
+WebSocket handling is different — no Depends() available. The voice router
+manually extracts ?token= from query params and calls _authenticate() which
+decodes the JWT and extracts the candidate name. If auth fails, websocket.close()
+is called with code 1008 (policy violation).
+
+
+--------------------------------------------------------------------------------
+5. HOW BUSINESS LOGIC IS STRUCTURED
+--------------------------------------------------------------------------------
+
+The codebase follows a layered architecture:
+
+  Router → Engine/Controller → Service → Model/DB
+
+ROUTERS (app/routers/)
+  Thin. Validate input, call one service/engine function, return response.
+  No if/else business logic. No direct DB calls (except auth_router which
+  calls auth_service).
+
+ENGINES (app/services/interview_engine.py)
+  Orchestrators. interview_engine owns the state machine and coordinates
+  between session_manager, question_service, and code_execution_service.
+  It's stateless — all state lives in session_manager.
+
+SERVICES (app/services/)
+  Single-responsibility. Each service owns one domain:
+  - auth_service: user creation and authentication
+  - question_service: MongoDB question queries + sanitisation
+  - session_manager: in-memory session CRUD
+  - code_execution_service: sandboxed code running
+  - voice_interview_service: STT→LLM→TTS pipeline
+  - ai_interviewer_service: all Groq API calls
+  - speech_to_text_service: all AssemblyAI calls
+  - tts_service: all Polly calls
+
+MODELS (app/models/)
+  MongoDB document shapes. Pydantic v2 with ConfigDict.
+  Separate from schemas/ which are API boundary shapes.
+
+SCHEMAS (app/schemas/)
+  Request/response shapes. Validators live here (e.g. difficulty must be
+  "easy"|"medium"|"hard"). These are what FastAPI serialises/deserialises.
+
+This separation means: if you swap MongoDB for PostgreSQL, you only touch
+models/ and services/. If you swap Groq for OpenAI, you only touch
+ai_interviewer_service.py.
+
+
+--------------------------------------------------------------------------------
+6. HOW ERRORS ARE HANDLED
+--------------------------------------------------------------------------------
+
+FASTAPI HTTPException
+  Used throughout for expected errors. Always includes status_code and detail.
+  Examples:
+    raise HTTPException(400, "Code submission cannot be empty.")
+    raise HTTPException(404, f"Question not found: '{question_id}'")
+    raise HTTPException(409, "Session has already ended.")
+    raise HTTPException(503, "Database unavailable.")
+
+  FastAPI automatically converts these to JSON responses:
+    {"detail": "Session has already ended."}
+
+AUTH ERRORS
+  verify_access_token() raises HTTP 401 with different messages for expired
+  vs invalid tokens. get_current_user() raises 401 if user not found in DB
+  (handles deleted users with valid tokens). 403 is raised in
+  get_current_question() if the session belongs to a different user.
+
+EXTERNAL API ERRORS
+  Every Groq, AssemblyAI, and Polly call is wrapped in try/except.
+  - ai_interviewer_service: logs the error, returns a hardcoded fallback
+    string so the WebSocket loop continues.
+  - speech_to_text_service: returns "" on any failure (treated as silence).
+  - tts_service: returns b"" on any failure (router sends tts_unavailable event).
+  This means a single external API outage degrades gracefully rather than
+  crashing the entire interview session.
+
+WEBSOCKET ERRORS
+  The voice router has a top-level try/except around the entire message loop.
+  WebSocketDisconnect is caught and logged. Any other exception triggers
+  send_event(event="error") and websocket.close(1011). The finally block
+  always calls active_sessions.pop(session_id) to clean up memory.
+
+VALIDATION ERRORS
+  Pydantic raises RequestValidationError automatically for invalid request
+  bodies. FastAPI converts these to HTTP 422 with field-level error details.
+  Custom @field_validator decorators in schemas add domain-specific validation
+  (e.g. difficulty must be "easy"|"medium"|"hard").
+
+DATABASE ERRORS
+  get_database() raises 503 if db is None. Individual service functions wrap
+  Motor calls in try/except and raise 500 with a clean message. end_interview()
+  logs but does NOT re-raise a MongoDB persistence failure — the session is
+  functionally over and the user should still get their score.
+
+STARTUP ERRORS
+  Pydantic BaseSettings raises ValidationError at import time if required env
+  vars are missing. connect_to_mongo() logs but doesn't crash if MongoDB is
+  unreachable — the app starts but every DB-dependent route returns 503.
+
+
+--------------------------------------------------------------------------------
+7. HOW CODE EVALUATION LOGIC WORKS
+--------------------------------------------------------------------------------
+
+File: app/services/code_execution_service.py
+
+The evaluation pipeline has 5 steps:
+
+STEP 1 — SYNTAX VALIDATION
+  compile(code, "<candidate>", "exec") is called. If it raises SyntaxError,
+  return immediately with result="error" and the error message. No exec() runs.
+
+STEP 2 — FORBIDDEN IMPORT CHECK (AST)
+  ast.parse(code) builds the AST. ast.walk() visits every node looking for
+  ast.Import and ast.ImportFrom nodes. If any module name is in the forbidden
+  set (os, sys, subprocess, socket, http, urllib, requests, threading,
+  multiprocessing, asyncio, pickle, inspect, ctypes, and 15+ others), return
+  immediately with an ImportError message.
+
+STEP 3 — FUNCTION NAME DETECTION (AST)
+  ast.iter_child_nodes() finds the first top-level FunctionDef or
+  AsyncFunctionDef. This is the function name that will be called for each
+  test case. If no function is defined, return error.
+
+STEP 4 — FETCH TEST CASES FROM MONGODB
+  fetch_test_cases(db, question_id) queries the questions collection with
+  projection {"test_cases": 1, "_id": 0} — only the test_cases field is
+  loaded, nothing else. Capped at 50 test cases.
+
+STEP 5 — EXECUTE EACH TEST CASE
+  For each test case:
+    a. Build restricted namespace: {"__builtins__": _SAFE_BUILTINS}
+       _SAFE_BUILTINS is a hand-crafted dict of ~40 safe builtins (int, str,
+       list, dict, len, range, sorted, etc.). No __import__, no open, no eval.
+    b. exec(compiled_code, namespace) — runs the function definition
+    c. namespace[func_name](*args) — calls the function with test input
+    d. This runs inside loop.run_in_executor(None, sync_fn) — thread executor
+       isolates blocking code from the async event loop
+    e. asyncio.wait_for(..., timeout=5.0) — kills infinite loops
+    f. _outputs_match(actual, expected) — strict equality first, then sorted
+       list comparison as fallback for order-insensitive answers
+
+RESULT AGGREGATION
+  - "passed"  — all test cases passed
+  - "partial" — some passed, some failed
+  - "failed"  — none passed
+  - "error"   — compile/import/runtime error
+
+  hide_inputs=True (default) replaces raw input values with "<hidden>" in
+  per-test results. Expected outputs are also hidden. Only pass/fail per test
+  and the aggregate counts are returned to the frontend.
+
+WHY exec() INSTEAD OF DOCKER
+  The code comments explicitly acknowledge this is not production-safe.
+  exec() with a restricted namespace is sufficient for a controlled demo
+  environment. For public deployment, the recommendation is Docker + seccomp
+  or AWS Lambda for full isolation.
+
+
+--------------------------------------------------------------------------------
+8. END-TO-END ARCHITECTURE FLOW
+--------------------------------------------------------------------------------
+
+FLOW A — Starting an Interview Session
+  POST /api/interview/start
+  → auth_middleware: decode JWT, find user in MongoDB
+  → interview_router calls interview_engine.start_interview()
+  → question_service.get_random_questions(): $match difficulty + $sample count
+  → sanitize_question() strips test_cases from each doc
+  → session_manager.create_session(): builds InterviewSessionModel, stores in dict
+  → update_stage(INTRO → QUESTION)
+  → append_message(role="system", opening message)
+  ← returns {session_id, stage: "QUESTION", question: {...}}
+
+FLOW B — Submitting Code
+  POST /api/interview/{id}/submit-code
+  → auth_middleware
+  → interview_engine.submit_code()
+  → validate stage == CODING
+  → code_execution_service.run_tests():
+      compile() → AST import check → detect func name
+      → fetch_test_cases(db, question_id)
+      → exec() in restricted namespace per test case (5s timeout each)
+      → aggregate pass/fail
+  → append_message(feedback)
+  → update_stage(CODING → TESTING)
+  ← returns {result, passed_tests, failed_tests, feedback}
+
+FLOW C — Voice Interview Turn (WebSocket)
+  Client sends binary audio chunk
+  → voice_interview_router receives bytes
+  → sends {event: "processing"}
+  → process_voice_turn():
+      ffmpeg converts audio to 16kHz PCM
+      → AssemblyAI: upload PCM → create transcript job → poll until done
+      → Groq LLaMA: ask_followup(question, transcript, history)
+      → history.append({question, answer, ai_response})
+      → Polly: synthesise MP3 from ai_text
+  → sends {event: "user_text", text: transcript}
+  → sends {event: "ai_text", text: ai_response}
+  → sends binary MP3 frame
+
+
+--------------------------------------------------------------------------------
+9. DEPLOYMENT — HOW TO RUN AND PUSH TO GITHUB
+--------------------------------------------------------------------------------
+
+WHY GUNICORN FAILED ON WINDOWS
+  Gunicorn uses fcntl, a Unix-only module for file locking. It does not work
+  on Windows at all. This is expected — gunicorn is Linux/macOS only.
+
+  For local development on Windows, use uvicorn directly:
+    cd Backend
+    uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+  For production deployment (Linux server / Docker), use:
+    gunicorn -w 4 -k uvicorn.workers.UvicornWorker app.main:app
+
+LOCAL DEVELOPMENT (Windows)
+  # Backend
+  cd Backend
+  pip install -r requirements.txt
+  uvicorn app.main:app --reload --port 8000
+
+  # Frontend
+  cd Frontend
+  npm install
+  npm start
+
+  API docs available at: http://localhost:8000/docs
+
+ENVIRONMENT VARIABLES REQUIRED
+  Create Backend/.env with these values (never commit this file):
+
+  MONGO_URI=mongodb+srv://user:pass@cluster.mongodb.net/interview_db
+  JWT_SECRET=your-secret-key-here
+  JWT_ALGORITHM=HS256
+  JWT_EXPIRATION_DAYS=7
+  GROQ_API_KEY=gsk_...
+  AI_MODEL=llama-3.1-8b-instant
+  STT_PROVIDER=assemblyai
+  ASSEMBLYAI_API_KEY=your-assemblyai-key
+  TTS_PROVIDER=polly
+  AWS_ACCESS_KEY=your-aws-access-key
+  AWS_SECRET_KEY=your-aws-secret-key
+  AWS_REGION=us-east-1
+
+PUSHING TO GITHUB (SAFE — NO .ENV FILES)
+  The .gitignore already excludes:
+    Backend/.env
+    *.env
+    __pycache__/
+    node_modules/
+    build/
+    Frontend/build/
+    Backend/rooms/
+    .vscode/
+
+  Commands to push everything:
+    git add .
+    git status          ← verify .env is NOT listed
+    git commit -m "feat: complete AI interview platform with voice pipeline"
+    git push origin main
+
+  If .env was accidentally staged, remove it:
+    git rm --cached Backend/.env
+    git commit -m "remove .env from tracking"
+
+VERIFYING THE DEPLOYMENT WORKS
+  1. Start backend:  uvicorn app.main:app --reload
+  2. Open:          http://localhost:8000/docs
+  3. Test signup:   POST /api/auth/signup
+  4. Test login:    POST /api/auth/login  → copy token
+  5. Authorize:     Click "Authorize" in Swagger, paste token
+  6. Start session: POST /api/interview/start
+  7. Submit code:   POST /api/interview/{id}/submit-code
+  8. End session:   POST /api/interview/{id}/end
+
+  For voice WebSocket, use a WebSocket client (e.g. Postman or browser):
+    ws://localhost:8000/ws/interview/{session_id}?token=<JWT>
+
+
+--------------------------------------------------------------------------------
+10. WHAT TO SAY IN "WALK ME THROUGH YOUR CODE"
+--------------------------------------------------------------------------------
+
+"The backend is a FastAPI application. The entry point is main.py which
+registers six REST routers and two WebSocket endpoints, connects to MongoDB
+on startup, and runs a background cleanup task.
+
+Authentication uses JWT. Every protected route has a get_current_user
+dependency that decodes the token and does a live MongoDB lookup — so deleted
+users are rejected even with a valid token.
+
+The core feature is the interview session. When a user starts an interview,
+the interview engine fetches random questions from MongoDB using $sample
+aggregation, creates an InterviewSessionModel in an in-memory dict protected
+by asyncio.Lock, and advances the state machine to QUESTION stage. The session
+lives in memory during the interview for zero-latency reads, and is only
+written to MongoDB once at the end.
+
+Code submission runs through a sandboxed exec() pipeline. Before execution,
+two AST passes check for syntax errors and forbidden imports. Each test case
+runs in a thread executor with a 5-second timeout. Test cases are never sent
+to the frontend — they're fetched with a targeted MongoDB projection and
+stripped from all API responses.
+
+The voice interview runs over a WebSocket. The client sends binary audio,
+the server runs it through ffmpeg for normalisation, AssemblyAI for
+transcription, Groq LLaMA for a follow-up question, and Amazon Polly for
+speech synthesis. The result is a typed VoiceTurnResult dataclass so the
+router knows exactly what happened at each step and sends the right event
+back to the client.
+
+Error handling is layered — Pydantic validates inputs, HTTPException handles
+expected errors, and every external API call has a try/except with a fallback
+so a single service outage doesn't crash the session."
+
+================================================================================

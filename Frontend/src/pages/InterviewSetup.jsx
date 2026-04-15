@@ -1,14 +1,51 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import BookingNavbar from '../layout/BookingNavbar';
-import { useTheme } from '../context/ThemeContext';
 import { fetchRandomQuestions } from '../services/questionService';
+import { ArrowRight } from 'lucide-react';
+import { API_URL } from '../config';
+import ThemeToggle from '../components/ThemeToggle';
 
-const InterviewSetup = () => {
-  const { isDarkMode, toggleTheme } = useTheme();
-  const navigate = useNavigate();
-  const location = useLocation();
-  const state = location.state || {};
+/* Shared top-bar used across the interview flow */
+function FlowBar({ step, label }) {
+  const steps = ['Setup', 'Permissions', 'Countdown', 'Interview'];
+  return (
+    <div className="border-b-2 border-black dark:border-white flex items-stretch h-14 bg-white dark:bg-black sticky top-0 z-40">
+      <a href="/"
+        className="flex items-center px-6 border-r-2 border-black dark:border-white
+                   font-black text-sm uppercase tracking-widest
+                   hover:bg-black hover:text-white
+                   dark:hover:bg-white dark:hover:text-black
+                   transition-colors duration-150">
+        CORTEX
+      </a>
+      {/* Step breadcrumb */}
+      <div className="flex items-stretch overflow-x-auto">
+        {steps.map((s, i) => {
+          const done    = i < step;
+          const current = i === step;
+          return (
+            <div key={s}
+              className={`flex items-center px-5 border-r-2 border-black dark:border-white text-[10px] font-black uppercase tracking-widest
+                ${current ? 'bg-black dark:bg-white text-white dark:text-black' : done ? 'bg-swiss-muted dark:bg-white/5 text-black/40 dark:text-white/40' : 'bg-white dark:bg-black text-black/20 dark:text-white/20'}`}>
+              <span className={`mr-2 ${current ? 'text-swiss-accent' : ''}`}>
+                {String(i + 1).padStart(2, '0')}.
+              </span>
+              {s}
+            </div>
+          );
+        })}
+      </div>
+      <div className="ml-auto">
+        <ThemeToggle variant="minimal" />
+      </div>
+    </div>
+  );
+}
+
+export default function InterviewSetup() {
+  const navigate  = useNavigate();
+  const location  = useLocation();
+  const state     = location.state || {};
 
   const [interviewId, setInterviewId] = useState(state.interviewId || '');
   const [loading, setLoading]         = useState(false);
@@ -27,113 +64,177 @@ const InterviewSetup = () => {
     duration:   state.duration   || '45 Minutes',
   };
 
-  // ── Fetch questions from backend, then navigate ──────────────
   const handleContinue = async () => {
     setLoading(true);
     setError('');
-
+    
     try {
-      const difficulty = details.difficulty.toLowerCase();
-      const count      = Number(details.questions);
+      // 🔒 STEP 1: Enforce Authentication
+      const token = localStorage.getItem('token');
+      if (!token) {
+        setError('Please login to start an interview.');
+        setLoading(false);
+        return;
+      }
 
-      const questions = await fetchRandomQuestions(difficulty, count);
+      // 🎯 STEP 2: Create backend session (this validates auth + creates sessionId)
+      const sessionRes = await fetch(`${API_URL}/api/interview/start`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          difficulty:     details.difficulty.toLowerCase(),
+          question_count: Number(details.questions),
+        }),
+      });
 
+      if (!sessionRes.ok) {
+        const err = await sessionRes.json().catch(() => ({}));
+        // Handle specific auth errors
+        if (sessionRes.status === 401) {
+          setError('Authentication failed. Please login again.');
+          localStorage.removeItem('token'); // Clear invalid token
+        } else {
+          setError(err.detail || `Session creation failed (${sessionRes.status})`);
+        }
+        setLoading(false);
+        return;
+      }
+
+      const sessionData = await sessionRes.json();
+      console.log('✅ SESSION CREATED:', sessionData);
+      
+      // 🚨 CRITICAL: Validate sessionId exists
+      const sessionId = sessionData.session_id;
+      if (!sessionId) {
+        throw new Error('Server did not return a valid session ID');
+      }
+
+      // 📚 STEP 3: Fetch full question objects from the SAME backend
+      // (ensures questions are sourced from the session's question pool)
+      const fetchedQuestions = await fetchRandomQuestions(
+        details.difficulty.toLowerCase(),
+        Number(details.questions)
+      );
+      console.log('✅ QUESTIONS FETCHED:', fetchedQuestions);
+
+      // 🚨 CRITICAL: Validate questions were fetched
+      if (!fetchedQuestions || fetchedQuestions.length === 0) {
+        throw new Error('Failed to load questions from server');
+      }
+
+      // ✅ All validations passed — proceed to next step
       navigate('/interview/permissions', {
         state: {
+          ...details,
           interviewId,
-          questions,               // ← pass fetched questions through the flow
-          difficulty: details.difficulty,
-          pack:       details.pack,
-          duration:   details.duration,
+          sessionId,           // ← guaranteed to be valid
+          questions: fetchedQuestions,   // ← guaranteed to have data
         },
       });
     } catch (err) {
-      setError(err.message || 'Failed to load questions. Please try again.');
+      console.error('❌ handleContinue error:', err);
+      setError(err.message || 'Failed to start interview. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
+  const rows = [
+    ['Difficulty',   details.difficulty],
+    ['Pack',         details.pack],
+    ['Questions',    String(details.questions)],
+    ['Duration',     details.duration],
+    ['Interview ID', interviewId || '—'],
+  ];
+
   return (
-    <div className={`min-h-screen font-sans flex flex-col transition-colors duration-300 ${isDarkMode ? 'bg-[#121212]' : 'bg-gray-50'}`}>
-      <BookingNavbar isDarkMode={isDarkMode} toggleTheme={toggleTheme} />
+    <div className="min-h-screen bg-white dark:bg-black text-black dark:text-white swiss-noise relative flex flex-col">
+      <FlowBar step={0} />
 
-      <div className="flex-1 flex items-center justify-center p-6">
-        <div className={`max-w-2xl w-full p-10 rounded-3xl shadow-lg border text-center ${
-          isDarkMode ? 'bg-[#1a1a1a] border-[#2d2d2d]' : 'bg-white border-gray-100'
-        }`}>
-          <div className={`w-20 h-20 mx-auto rounded-full flex items-center justify-center mb-6 ${
-            isDarkMode ? 'bg-indigo-900/30 text-indigo-400' : 'bg-indigo-50 text-indigo-600'
-          }`}>
-            <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-            </svg>
+      {/* Page header */}
+      <div className="border-b-2 border-black dark:border-white px-6 lg:px-16 py-10 swiss-grid-pattern bg-swiss-muted dark:bg-white/5">
+        <span className="text-swiss-accent text-xs font-black uppercase tracking-widest">
+          01. Setup
+        </span>
+        <h1 className="mt-2 font-black uppercase tracking-tighter leading-none
+                       text-[clamp(2.5rem,6vw,5rem)]">
+          SESSION<br />DETAILS.
+        </h1>
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 grid grid-cols-1 lg:grid-cols-12">
+
+        {/* Left: details table */}
+        <div className="lg:col-span-7 border-b-2 lg:border-b-0 lg:border-r-2 border-black dark:border-white p-6 lg:p-16">
+          <div className="flex items-center gap-3 mb-8">
+            <span className="text-swiss-accent text-xs font-black uppercase tracking-widest">02.</span>
+            <span className="text-xs font-black uppercase tracking-widest">Confirm Configuration</span>
+            <div className="flex-1 h-px bg-black dark:bg-white" />
           </div>
 
-          <h2 className={`text-3xl font-extrabold mb-2 tracking-tight ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
-            Interview Setup
-          </h2>
-          <p className={`text-sm tracking-wide font-mono mb-8 ${isDarkMode ? 'text-indigo-400' : 'text-indigo-600'}`}>
-            ID: {interviewId || 'Loading...'}
-          </p>
-
-          <div className={`text-left p-8 rounded-2xl mb-8 border ${isDarkMode ? 'bg-[#212121] border-[#2d2d2d]' : 'bg-gray-50 border-gray-200'}`}>
-            <h3 className={`font-bold mb-6 text-xl border-b pb-2 ${isDarkMode ? 'text-gray-200 border-[#3d3d3d]' : 'text-gray-800 border-gray-200'}`}>
-              Session Details
-            </h3>
-            <div className="grid grid-cols-2 gap-y-6 gap-x-4">
-              <div>
-                <p className={`text-sm mb-1 ${isDarkMode ? 'text-gray-500' : 'text-gray-500'}`}>Difficulty</p>
-                <p className={`font-semibold ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>{details.difficulty}</p>
+          <div className="border-2 border-black dark:border-white">
+            {rows.map(([k, v], i) => (
+              <div key={k}
+                className={`flex items-center justify-between px-6 py-5
+                  ${i < rows.length - 1 ? 'border-b-2 border-black dark:border-white' : ''}
+                  hover:bg-swiss-muted dark:hover:bg-white/10 transition-colors duration-150`}>
+                <span className="text-[10px] font-black uppercase tracking-widest text-black/40 dark:text-white/40">{k}</span>
+                <span className={`text-sm font-black uppercase tracking-tight
+                  ${k === 'Interview ID' ? 'text-swiss-accent font-mono' : 'text-black dark:text-white'}`}>
+                  {v}
+                </span>
               </div>
-              <div>
-                <p className={`text-sm mb-1 ${isDarkMode ? 'text-gray-500' : 'text-gray-500'}`}>Question Pack</p>
-                <p className={`font-semibold ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>{details.pack}</p>
-              </div>
-              <div>
-                <p className={`text-sm mb-1 ${isDarkMode ? 'text-gray-500' : 'text-gray-500'}`}>Number of Questions</p>
-                <p className={`font-semibold ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>{details.questions}</p>
-              </div>
-              <div>
-                <p className={`text-sm mb-1 ${isDarkMode ? 'text-gray-500' : 'text-gray-500'}`}>Estimated Duration</p>
-                <p className={`font-semibold ${isDarkMode ? 'text-gray-200' : 'text-gray-800'}`}>{details.duration}</p>
-              </div>
-            </div>
+            ))}
           </div>
 
-          {/* Error Message */}
+          {/* Error */}
           {error && (
-            <div className="mb-4 px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm text-left">
-              ⚠️ {error}
+            <div className="mt-4 border-2 border-swiss-accent px-5 py-4 bg-swiss-accent/5">
+              <p className="text-xs font-black uppercase tracking-widest text-swiss-accent">
+                ⚠ {error}
+              </p>
             </div>
           )}
+        </div>
 
-          <button
-            onClick={handleContinue}
-            disabled={loading}
-            className={`w-full py-4 rounded-xl font-bold text-lg shadow-md transition-all transform ${
-              loading
-                ? 'opacity-60 cursor-not-allowed'
-                : 'hover:-translate-y-0.5'
-            } ${isDarkMode
-              ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-500/20'
-              : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-600/20'
-            }`}
-          >
-            {loading ? (
-              <span className="flex items-center justify-center gap-2">
-                <svg className="animate-spin w-5 h-5" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                </svg>
-                Loading Questions...
+        {/* Right: CTA */}
+        <div className="lg:col-span-5 flex flex-col">
+          <div className="flex-1 p-6 lg:p-16 swiss-dots bg-swiss-muted dark:bg-white/5 flex flex-col justify-between">
+            <div>
+              <span className="text-swiss-accent text-xs font-black uppercase tracking-widest">
+                03. Ready?
               </span>
-            ) : 'Continue'}
-          </button>
+              <p className="mt-4 text-sm leading-relaxed text-black/60 dark:text-white/60 max-w-xs">
+                Questions will be fetched from the server based on your selected difficulty.
+                Your camera and microphone will be checked on the next step.
+              </p>
+            </div>
+
+            <div className="mt-10 space-y-0">
+              <button
+                onClick={handleContinue}
+                disabled={loading}
+                className="w-full h-14 flex items-center justify-between px-6
+                           bg-black dark:bg-white text-white dark:text-black text-xs font-black uppercase tracking-widest
+                           border-2 border-black dark:border-white
+                           hover:bg-swiss-accent hover:border-swiss-accent
+                           dark:hover:bg-swiss-accent dark:hover:border-swiss-accent dark:hover:text-white
+                           disabled:opacity-40 disabled:cursor-not-allowed
+                           transition-colors duration-150"
+              >
+                <span>{loading ? 'Loading Questions...' : 'Continue'}</span>
+                {loading
+                  ? <div className="w-4 h-4 border-2 border-white dark:border-black border-t-transparent animate-spin" />
+                  : <ArrowRight size={16} strokeWidth={3} />}
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
   );
-};
-
-export default InterviewSetup;
+}
