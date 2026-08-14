@@ -1,0 +1,36 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #ffdf20;
+  --color-on-primary: #111111;
+  --color-dark-bg: #171717;
+  --color-dark-surface: #222222;
+  --color-dark-card: #1c1c1c;
+  --color-dark-border: #333333;
+  --font-geist: 'Geist', 'Inter', sans-serif;
+}
+
+body {
+  background-color: #171717;
+  color: #ffffff;
+  font-family: 'Geist', 'Inter', sans-serif;
+}
+
+/* Custom scrollbar for Coder's Gyan theme */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #171717;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #333333;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #ffdf20;
+}
