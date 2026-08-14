@@ -1,0 +1,466 @@
+===============================================================================
+CORTEX — TECHNICAL INTERVIEW PREPARATION & ARCHITECTURAL DEEP DIVE
+===============================================================================
+
+-------------------------------------------------------------------------------
+SECTION 1 — 30-SECOND PROJECT PITCH
+-------------------------------------------------------------------------------
+"I built Cortex, an AI-powered mock interview platform designed to help software engineers practice technical and behavioral interviews with real-time audio prompting and instant evaluation. Instead of static question lists, Cortex parses the candidate's uploaded PDF resume using pdfjs-dist and generates role-tailored questions using OpenRouter's GPT-4o-Mini integration. The browser conducts the interview using native Web Speech APIs for speech synthesis and recognition, and evaluates answers across confidence, communication, and correctness dimensions. The most interesting engineering challenge was coordinating asynchronous browser speech synthesis events with React state and avatar video playback while keeping server latency minimal."
+
+
+-------------------------------------------------------------------------------
+SECTION 2 — 2-MINUTE PROJECT EXPLANATION
+-------------------------------------------------------------------------------
+Why I Built It:
+Static interview preparation platforms fail to simulate the real pressure of speaking under time constraints, while human mock interviews are expensive and hard to schedule. I built Cortex to provide an automated, affordable, voice-driven mock interview environment that gives structured quantitative feedback.
+
+User Flow:
+1. Candidate logs in via Google Auth (Firebase Auth client side, issuing an HTTP-only JWT cookie from backend).
+2. Candidate uploads a PDF resume and selects target role, experience level, and mode (Technical vs HR).
+3. The system parses resume text using pdfjs-dist and generates 5 context-aware, difficulty-scaled questions.
+4. The AI interviewer reads each question aloud using browser SpeechSynthesis while displaying an animated video avatar.
+5. The candidate speaks their response into the microphone, transcribed live by Web Speech API SpeechRecognition.
+6. Upon submission or timer expiration, the backend uses OpenRouter (GPT-4o-Mini) to evaluate the response and return numerical scores (0-10) and short feedback.
+7. Candidate views their score breakdown, performance trend charts (Recharts), and exports a downloadable PDF report (jsPDF).
+
+Architecture & Tech Stack:
+- Frontend: React 18, Vite, Redux Toolkit, TailwindCSS, Motion, Recharts, jsPDF.
+- Backend: Node.js, Express.js (ES Modules), Mongoose.
+- Database: MongoDB.
+- AI Integration: OpenRouter API (openai/gpt-4o-mini).
+- Authentication: Firebase Google Auth + Server JWT HTTP-only Cookies.
+- Deployment: Docker multi-stage build running on AWS EC2.
+
+Most Difficult Component:
+Managing state synchronization between native browser Web Speech APIs (SpeechSynthesis & SpeechRecognition) and the React component lifecycle without causing memory leaks or UI timing desynchronization during interview progression.
+
+
+-------------------------------------------------------------------------------
+SECTION 3 — ARCHITECTURE WALKTHROUGH
+-------------------------------------------------------------------------------
+Request / Event Trace:
+
+1. Authentication Flow:
+   Browser (Firebase Google Sign-In) 
+   ──► Receives Google User Object 
+   ──► POST /api/auth/google ({ name, email }) 
+   ──► Auth Controller (server/controllers/auth.controller.js:googleAuth) 
+   ──► Finds/Creates User in MongoDB (server/models/user.model.js) 
+   ──► Issues JWT Token via genToken utility 
+   ──► Sets 'token' HTTP-Only Cookie (sameSite: strict, maxAge: 7 days) 
+   ──► Returns User JSON to Client Redux Store (userSlice.js).
+
+2. Resume Upload & Structuring Flow:
+   Browser (FormData upload) 
+   ──► POST /api/interview/resume 
+   ──► Multer Middleware (server/middlewares/multer.js) saves to uploads/ 
+   ──► Interview Controller (server/controllers/interview.controller.js:analyzeResume) 
+   ──► Reads buffer into Uint8Array 
+   ──► pdfjs-dist extracts text page-by-page 
+   ──► Text sanitized via regex 
+   ──► Local file unlinked asynchronously 
+   ──► OpenRouter Service (server/services/openRouter.service.js:askAi) 
+   ──► Calls GPT-4o-Mini with JSON extraction schema 
+   ──► Returns role, experience, projects, skills JSON to frontend.
+
+3. Question Generation Flow:
+   Browser ──► POST /api/interview/generate-questions 
+   ──► isAuth Middleware (server/middlewares/isAuth.js) verifies JWT cookie 
+   ──► Interview Controller verifies User.credits >= 50 
+   ──► OpenRouter Service sends prompt requesting 5 questions (15-25 words each, difficulty scaling) 
+   ──► Controller deducts 50 credits (User.credits -= 50) 
+   ──► Creates Interview document in MongoDB with questions array & time limits 
+   ──► Returns interviewId, questions, remaining credits.
+
+4. Voice Interview Execution Flow:
+   Browser (Step2Interview.jsx) 
+   ──► window.speechSynthesis.speak(SpeechSynthesisUtterance) 
+   ──► SpeechSynthesis onstart event plays avatar video element 
+   ──► SpeechSynthesis onend event pauses video, resets time, starts webkitSpeechRecognition 
+   ──► Candidate speaks, onresult appends text to answer state 
+   ──► Timer interval decrements timeLeft state every 1 second 
+   ──► Candidate clicks Submit or timeLeft reaches 0 
+   ──► POST /api/interview/submit-answer 
+   ──► Backend evaluates answer via OpenRouter 
+   ──► Updates question subdocument in MongoDB 
+   ──► Returns feedback text 
+   ──► SpeechSynthesis speaks feedback aloud.
+
+5. Report & PDF Generation Flow:
+   Browser ──► GET /api/interview/report/:id 
+   ──► Fetches Interview document 
+   ──► Computes average confidence, communication, correctness 
+   ──► Step3Report.jsx renders Recharts AreaChart & CircularProgressbar 
+   ──► Download PDF button executes client-side jsPDF + autoTable generation.
+
+
+-------------------------------------------------------------------------------
+SECTION 4 — FEATURE-BY-FEATURE INTERNAL WORKING
+-------------------------------------------------------------------------------
+1. Google OAuth & JWT Authentication
+   - User Sees: "Sign in with Google" button on Auth modal.
+   - Internal Mechanism: Client authenticates with Firebase GoogleAuthProvider, receives credentials, posts email/name to `/api/auth/google`. Server creates user record if new, signs JWT containing `{ userId }`, sets `token` cookie with `httpOnly: true`.
+   - Relevant Files: client/src/pages/Auth.jsx, client/src/utils/firebase.js, server/controllers/auth.controller.js, server/middlewares/isAuth.js.
+
+2. Resume Parsing & Auto-Fill
+   - User Sees: File upload zone for PDF resume; auto-fills target role, skills, and projects.
+   - Internal Mechanism: Multer receives file, `pdfjs-dist` parses PDF buffer to text, backend sends text to OpenRouter asking for strict JSON structure (`{ role, experience, projects, skills }`), returns result, and unlinks file.
+   - Relevant Files: client/src/components/Step1SetUp.jsx, server/controllers/interview.controller.js (analyzeResume), server/middlewares/multer.js.
+
+3. Question Generation & Credit Deduction
+   - User Sees: "Start Interview" button showing credit cost.
+   - Internal Mechanism: Validates `credits >= 50`, constructs prompt containing candidate role/experience/skills, calls OpenRouter, splits response by newline into 5 questions, assigns difficulty levels (`easy`, `medium`, `hard`) and time limits (`60s`, `90s`, `120s`), deducts 50 credits, saves `Interview` document to MongoDB with status `Incompleted`.
+   - Relevant Files: server/controllers/interview.controller.js (generateQuestion), server/models/interview.model.js, server/models/user.model.js.
+
+4. Voice-Guided Interview & Avatar Interaction
+   - User Sees: Animated AI video avatar speaking questions, live speech-to-text transcription, timer ring.
+   - Internal Mechanism: SpeechSynthesisUtterance triggers avatar `<video>` DOM element `play()` on start and `pause()` on end. `webkitSpeechRecognition` captures voice input continuously. Countdown `setInterval` tracks remaining seconds.
+   - Relevant Files: client/src/components/Step2Interview.jsx, client/src/components/Timer.jsx.
+
+5. Real-Time Answer Evaluation
+   - User Sees: "Evaluating Response..." state followed by 15-word AI feedback read aloud.
+   - Internal Mechanism: Posts `interviewId`, `questionIndex`, `answer`, `timeTaken` to `/api/interview/submit-answer`. If time limit exceeded or empty answer, assigns score 0. Otherwise, calls OpenRouter with scoring guidelines (0-10 for Confidence, Communication, Correctness), parses JSON result, updates MongoDB subdocument, and returns feedback string.
+   - Relevant Files: server/controllers/interview.controller.js (submitAnswer), server/services/openRouter.service.js.
+
+6. Razorpay Payment Integration
+   - User Sees: Pricing cards ($/INR) to purchase credit packages.
+   - Internal Mechanism: POST `/api/payment/create-order` creates Razorpay order via SDK. Client opens Razorpay checkout modal. On success, client posts `razorpay_order_id`, `razorpay_payment_id`, and `razorpay_signature` to `/api/payment/verify-payment`. Server verifies HMAC SHA-256 signature using `crypto`, updates payment status to `paid`, and executes `User.findByIdAndUpdate` with `$inc: { credits }`.
+   - Relevant Files: client/src/pages/Pricing.jsx, server/controllers/payment.controller.js, server/services/razorpay.service.js.
+
+
+-------------------------------------------------------------------------------
+SECTION 5 — HARDEST ENGINEERING PROBLEMS
+-------------------------------------------------------------------------------
+1. Browser Voice Synthesis & Video Synchronization
+   - Problem: Coordinating native browser SpeechSynthesis voice output with DOM `<video>` avatar playback without desynchronizing state.
+   - Why Difficult: `SpeechSynthesisUtterance` callbacks (`onstart`, `onend`) execute outside React state management and behave inconsistently across browsers.
+   - How System Behaved: Video would keep playing after speech ended or freeze mid-question.
+   - Root Cause: Missing cleanup of speech synthesis instances and unhandled Promise rejections when component re-rendered.
+   - Solution: Wrapped `speakText` in explicit JavaScript Promises, calling `window.speechSynthesis.cancel()` before starting new utterances, and controlling DOM video elements directly inside `onstart` and `onend` listeners.
+   - Trade-Off: Speech synthesis relies on OS-installed voice fonts available on candidate devices.
+
+2. PDF Resume Text Extraction Sanitation
+   - Problem: Extracting text from multi-page PDF resumes produced irregular formatting and extra whitespace that degraded LLM question generation quality.
+   - Why Difficult: PDFs store layout positioning coordinates rather than semantic strings.
+   - Root Cause: Raw string concatenation preserved line breaks inside single sentences.
+   - Solution: Implemented `pdfjs-dist` text content mapping followed by regex normalization (`.replace(/\s+/g, " ").trim()`) before passing data to OpenRouter prompts.
+   - Trade-Off: Complex multi-column PDF layouts may occasionally reorder text lines.
+
+3. Managing Speech Recognition Interruption & Silence Limits
+   - Problem: Browser SpeechRecognition auto-stopped after short candidate pauses, missing parts of spoken answers.
+   - Why Difficult: Webkit SpeechRecognition enforces vendor-specific silence thresholds.
+   - Root Cause: Default recognition settings terminated session on first silence detection.
+   - Solution: Set `recognition.continuous = true` and `interimResults = false`, appending new transcripts incrementally to React state (`setAnswer(prev => prev + " " + transcript)`).
+   - Trade-Off: Candidate must manually click mute/unmute if background noise is present.
+
+4. Enforcing Strict JSON Outputs from LLM APIs
+   - Problem: LLM responses occasionally included conversational markdown wrappers (e.g. ```json ... ```), breaking `JSON.parse()`.
+   - Why Difficult: Non-deterministic nature of generative language models.
+   - Root Cause: Default temperature settings allowed conversational preamble.
+   - Solution: Designed strict system prompts specifying "Return ONLY valid JSON", combined with defensive error handling in controller routines.
+   - Trade-Off: Requires retry/fallback handling if API returns malformed JSON.
+
+5. Cryptographic Payment Verification Safety
+   - Problem: Ensuring users cannot forge payment success calls to claim free credits.
+   - Why Difficult: Client-side callbacks can be manipulated in developer tools.
+   - Root Cause: Relying on client-side success events without server validation.
+   - Solution: Implemented HMAC SHA-256 signature verification in `payment.controller.js` using Node.js `crypto` module, comparing server-computed hash against `razorpay_signature`.
+   - Trade-Off: Adds small cryptographic computation step per payment verification.
+
+
+-------------------------------------------------------------------------------
+SECTION 6 — DESIGN DECISIONS
+-------------------------------------------------------------------------------
+1. Why Web Speech API instead of Server-Side WebRTC/Whisper?
+   - Decision: Use client-side `webkitSpeechRecognition` and `SpeechSynthesisUtterance`.
+   - Reason: Eliminates server audio processing overhead, reduces API bandwidth costs, and delivers instant voice feedback.
+   - Alternative: Streaming raw audio to OpenAI Whisper API and ElevenLabs.
+   - Trade-Off: Limits speech recognition support primarily to Chrome/Edge browsers.
+
+2. Why REST API instead of WebSockets?
+   - Decision: Use HTTP REST endpoints (`axios`) for question submission and evaluation.
+   - Reason: Interview progression is step-by-step sequential rather than multi-user collaborative. REST simplifies state management, caching, and stateless scaling.
+   - Alternative: Socket.io persistent WebSocket connection.
+   - Trade-Off: Slightly higher HTTP connection overhead per question submission compared to open socket channels.
+
+3. Why MongoDB / Mongoose?
+   - Decision: MongoDB document database.
+   - Reason: Interview documents naturally embed array sub-documents (`questions` array with score, feedback, time limit per item), allowing atomic fetches of complete interview sessions in single queries.
+   - Alternative: Relational PostgreSQL schema with separate `interviews` and `questions` tables.
+   - Trade-Off: Schema flexibility requires strict application-level validation.
+
+4. Why OpenRouter Abstraction?
+   - Decision: Route AI calls through OpenRouter API.
+   - Reason: Provides flexibility to switch between `gpt-4o-mini`, `claude-3-haiku`, or open-source models without changing controller code.
+   - Alternative: Native OpenAI Node SDK.
+   - Trade-Off: Introduces third-party API gateway dependency.
+
+5. Why Multi-Stage Dockerfile?
+   - Decision: Stage 1 (`client-builder`) builds Vite bundle; Stage 2 (`runner`) serves static frontend from Express.
+   - Reason: Single container handles both static SPA delivery and REST API routes, simplifying single-instance AWS EC2 deployment.
+   - Alternative: Dual container architecture with Nginx reverse proxy.
+   - Trade-Off: Express process handles static file serving alongside API logic.
+
+
+-------------------------------------------------------------------------------
+SECTION 7 — SYSTEM DESIGN QUESTIONS
+-------------------------------------------------------------------------------
+Q1: What happens if 10,000 users start interviews simultaneously?
+- Strong Answer: The bottleneck would be external OpenRouter API rate limits and synchronous database updates. I would introduce a Redis caching layer for pre-generated questions by role, offload answer evaluation to background worker queues (BullMQ), and scale Node.js processes horizontally behind an AWS Application Load Balancer.
+- Weak Answer: "The system will automatically scale because Node.js is fast."
+- Follow-up: How would you prevent credit deduction race conditions under high concurrency? Use MongoDB atomic operators like `$inc` or transactional sessions.
+
+Q2: How would you handle a network disconnection halfway through an interview?
+- Strong Answer: Currently, interview progress is stored incrementally in MongoDB after each `submitAnswer` request. If the user disconnects, the interview status remains `Incompleted`. Upon reconnecting, the client can fetch the interview document by ID and resume from the last unanswered question index.
+- Weak Answer: "The user has to restart the interview from scratch."
+- Follow-up: How would you prevent timer manipulation after a reconnect? Store question start timestamp on backend and calculate remaining time server-side.
+
+Q3: How would you isolate arbitrary code execution if added in the future?
+- Strong Answer: I would execute candidate code inside isolated Docker containers or microVMs (like AWS Firecracker or Judge0 API) with strict memory/CPU limits, disabled network interfaces, and execution timeouts (e.g. 5 seconds).
+- Weak Answer: "Use Node.js `eval()` or `vm` module on the backend server."
+- Follow-up: Why is `child_process.exec` unsafe for code execution? It executes directly on the host system without process or file system sandbox boundaries.
+
+
+-------------------------------------------------------------------------------
+SECTION 8 — DATABASE QUESTIONS
+-------------------------------------------------------------------------------
+Schemas & Models:
+1. `User` Schema (server/models/user.model.js):
+   - Fields: `name` (String), `email` (String, unique), `credits` (Number, default: 100), `timestamps`.
+2. `Interview` Schema (server/models/interview.model.js):
+   - Fields: `userId` (ObjectId, ref: User), `role` (String), `experience` (String), `mode` (String, enum: ["HR", "Technical"]), `resumeText` (String), `questions` (Array of question objects), `finalScore` (Number), `status` (enum: ["Incompleted", "completed"]).
+   - Question Subdocument: `question`, `difficulty`, `timeLimit`, `answer`, `feedback`, `score`, `confidence`, `communication`, `correctness`.
+3. `Payment` Schema (server/models/payment.model.js):
+   - Fields: `userId` (ObjectId, ref: User), `planId`, `amount`, `credits`, `razorpayOrderId`, `razorpayPaymentId`, `status` (enum: ["created", "paid", "failed"]).
+
+Indexing Opportunities:
+- Index `userId` and `createdAt` on `Interview` collection (`{ userId: 1, createdAt: -1 }`) for fast retrieval in `getMyInterviews`.
+- Index `email` on `User` collection (already unique index).
+- Index `razorpayOrderId` on `Payment` collection for quick payment verification lookups.
+
+
+-------------------------------------------------------------------------------
+SECTION 9 — API QUESTIONS
+-------------------------------------------------------------------------------
+Core REST Endpoints:
+
+1. POST /api/auth/google
+   - Purpose: Authenticates Google user & issues HTTP-only JWT cookie.
+   - Request Body: `{ name, email }`
+   - Backend Flow: Finds/creates user in MongoDB, calls `genToken(user._id)`, sets `token` cookie.
+   - Response: User JSON object.
+
+2. POST /api/interview/resume
+   - Purpose: Uploads and parses PDF resume.
+   - Headers: `Content-Type: multipart/form-data`
+   - Backend Flow: Multer saves file, `pdfjs-dist` extracts text, regex cleans string, OpenRouter extracts JSON structure, deletes local file.
+   - Response: `{ role, experience, projects, skills, resumeText }`
+
+3. POST /api/interview/generate-questions
+   - Purpose: Generates 5 adaptive questions & deducts credits.
+   - Authentication: Required (`isAuth` middleware).
+   - Request Body: `{ role, experience, mode, resumeText, projects, skills }`
+   - Backend Flow: Verifies `credits >= 50`, calls OpenRouter, parses 5 questions, deducts 50 credits, creates `Interview` record.
+   - Response: `{ interviewId, creditsLeft, userName, questions }`
+
+4. POST /api/interview/submit-answer
+   - Purpose: Evaluates candidate answer for a question.
+   - Request Body: `{ interviewId, questionIndex, answer, timeTaken }`
+   - Backend Flow: Validates time limit, sends answer to OpenRouter for 0-10 scoring and 15-word feedback, updates MongoDB subdocument.
+   - Response: `{ feedback }`
+
+5. POST /api/payment/verify-payment
+   - Purpose: Cryptographic verification of Razorpay transaction.
+   - Request Body: `{ razorpay_order_id, razorpay_payment_id, razorpay_signature }`
+   - Backend Flow: Computes HMAC SHA-256 signature using `crypto`, compares hash, updates `Payment` status to `paid`, increments `User.credits`.
+   - Response: `{ success: true, message, user }`
+
+
+-------------------------------------------------------------------------------
+SECTION 10 — SECURITY REVIEW
+-------------------------------------------------------------------------------
+Currently Secure:
+- HTTP-only, `sameSite: strict` JWT cookies prevent client-side XSS token theft.
+- Cryptographic HMAC SHA-256 verification prevents fake payment injection.
+- Temporary PDF files are immediately unlinked after extraction.
+
+Security Weaknesses & Improvements Needed:
+- Missing rate-limiting middleware (`express-rate-limit`) on AI generation and auth endpoints.
+- Absence of strict schema validation (Zod/Joi) on request body inputs.
+- CORS origin currently set to `http://localhost:5173` in `server/index.js` (must be environment-driven for production).
+- PDF upload should validate MIME type and magic bytes to block malicious non-PDF files.
+
+
+-------------------------------------------------------------------------------
+SECTION 11 — FAILURE SCENARIOS
+-------------------------------------------------------------------------------
+1. Backend Crashes Mid-Interview:
+   - Current: Progress up to last submitted question is saved in MongoDB.
+   - Ideal Production: Client auto-reconnects, fetches stored interview state by ID, and resumes without losing previously submitted answers.
+
+2. Database Unavailable:
+   - Current: Returns 500 error response (`failed to create interview...`).
+   - Ideal Production: Implement retry policies with exponential backoff and circuit breaker pattern.
+
+3. OpenRouter AI API Timeout:
+   - Current: Returns 500 status with error message.
+   - Ideal Production: Fall back to secondary model provider (e.g. Anthropic/Groq) or serve fallback question bank.
+
+4. User Refreshes Page During Session:
+   - Current: Active React state in `Step2Interview` resets if not saved in local storage.
+   - Ideal Production: Persist current `interviewId` and `currentIndex` in `localStorage` to restore session seamlessly.
+
+
+-------------------------------------------------------------------------------
+SECTION 12 — SCALING CORTEX
+-------------------------------------------------------------------------------
+Scaling Roadmap:
+
+1. 100 to 1,000 Users:
+   - Move static file serving from Express to AWS CloudFront CDN.
+   - Add MongoDB indexes on `userId` and `createdAt`.
+   - Environment-driven CORS configuration.
+
+2. 1,000 to 10,000 Users:
+   - Separate Node.js API server into multiple container instances behind an AWS Application Load Balancer (ALB).
+   - Introduce Redis for session caching and credit balance caching.
+   - Offload answer evaluation to BullMQ asynchronous background queues.
+
+3. 10,000 to 100,000 Users:
+   - Read/write database splitting with MongoDB replica sets.
+   - Implement multi-provider AI failover routing (OpenRouter + direct OpenAI / Anthropic fallbacks).
+   - Container orchestration using AWS ECS or Kubernetes (EKS) with auto-scaling triggers based on CPU/memory utilization.
+
+
+-------------------------------------------------------------------------------
+SECTION 13 — "IF I HAD MORE TIME"
+-------------------------------------------------------------------------------
+If I had another month to work on Cortex, I would prioritize these engineering improvements:
+1. Asynchronous Job Processing: Refactor evaluation logic using BullMQ and Redis so answer scoring happens asynchronously without blocking HTTP response cycles.
+2. WebRTC Audio Pipeline: Replace browser Web Speech APIs with a server-side WebRTC pipeline feeding into OpenAI Whisper for higher accuracy across all browsers and languages.
+3. Automated Test Suite: Write end-to-end API integration tests using Supertest/Jest and frontend component tests using React Testing Library.
+4. Session Resilience: Implement state recovery so candidates can resume interrupted interview sessions from any device seamlessly.
+
+
+-------------------------------------------------------------------------------
+SECTION 14 — CODE WALKTHROUGH PREPARATION
+-------------------------------------------------------------------------------
+Key Files to Defend in an Interview:
+
+1. `server/controllers/interview.controller.js`:
+   - Responsibility: Core business logic for resume parsing, question generation, answer evaluation, and score aggregation.
+   - Key Functions: `analyzeResume`, `generateQuestion`, `submitAnswer`, `finishInterview`.
+
+2. `server/services/openRouter.service.js`:
+   - Responsibility: Interfacing with OpenRouter REST API to execute LLM prompts.
+   - Key Functions: `askAi(messages)`.
+
+3. `client/src/components/Step2Interview.jsx`:
+   - Responsibility: Main voice interview session component managing speech synthesis, speech recognition, timer countdown, and video avatar synchronization.
+   - Key Hooks/Refs: `speechSynthesis`, `webkitSpeechRecognition`, `videoRef`, `recognitionRef`.
+
+4. `server/controllers/payment.controller.js`:
+   - Responsibility: Handling Razorpay order creation and HMAC SHA-256 signature verification.
+   - Key Functions: `createOrder`, `verifyPayment`.
+
+5. `server/middlewares/isAuth.js`:
+   - Responsibility: Authenticating incoming requests by verifying JWT tokens stored in HTTP-only cookies.
+
+
+-------------------------------------------------------------------------------
+SECTION 15 — INTERVIEWER ATTACK MODE (25 TOUGH QUESTIONS & ANSWERS)
+-------------------------------------------------------------------------------
+Q1: You claim this is a real-time voice interview platform. Is it truly real-time at the protocol level?
+- Answer: No. At the network protocol level, communication uses HTTP REST endpoints (`POST`). The "real-time" voice experience is achieved client-side by streaming spoken audio locally through the browser's native Web Speech API (`webkitSpeechRecognition`) into text state before sending HTTP payloads.
+
+Q2: Why did you use `pdfjs-dist` instead of simpler npm packages like `pdf-parse`?
+- Answer: `pdfjs-dist` provides lower-level access to page content buffers and text items directly from binary buffers, allowing page-by-page text extraction without external system binary dependencies.
+
+Q3: How do you prevent XSS attacks from stealing authentication tokens?
+- Answer: Authentication tokens are stored exclusively in HTTP-only cookies (`httpOnly: true`, `sameSite: strict`). JavaScript running in the DOM cannot access `document.cookie`, neutralizing XSS token theft attempts.
+
+Q4: What happens if a user submits an answer after the time limit has expired?
+- Answer: In `submitAnswer` ([`interview.controller.js:247`](file:///d:/ResumeProjects/cortex-app/server/controllers/interview.controller.js#L247)), the backend checks `if (timeTaken > question.timeLimit)`. If exceeded, the score is set to 0, feedback is set to "Time limit exceeded", and AI evaluation is skipped to conserve credits.
+
+Q5: Why is `crypto.createHmac` used in payment verification instead of a simple database lookup?
+- Answer: `crypto.createHmac` verifies that the payment signature sent by the client was produced using our secret key (`RAZORPAY_KEY_SECRET`). Without HMAC verification, any user could spoof a successful payment response payload.
+
+Q6: How do you handle credit deduction race conditions if a user clicks "Start" twice quickly?
+- Answer: Currently, credit deduction executes inside the controller during question generation. To guarantee strict concurrency safety in production, I would use MongoDB atomic updates (`User.updateOne({ _id, credits: { $gte: 50 } }, { $inc: { credits: -50 } })`).
+
+Q7: What happens if OpenRouter API returns non-JSON text during answer evaluation?
+- Answer: `JSON.parse(aiResponse)` will throw an exception, caught by the `catch` block which logs the error and returns a 500 status code. In production, a defensive fallback parser or model retry would handle malformed responses.
+
+Q8: Why did you put static asset serving inside Express instead of Nginx?
+- Answer: For deployment simplicity in a single Docker container on EC2. For high-traffic production, static assets would be offloaded to AWS S3/CloudFront.
+
+Q9: How do you calculate the overall interview score?
+- Answer: In `finishInterview` ([`interview.controller.js:337`](file:///d:/ResumeProjects/cortex-app/server/controllers/interview.controller.js#L337)), scores across all 5 questions are summed for total score, confidence, communication, and correctness, divided by total questions, and rounded to 1 decimal place.
+
+Q10: Why did you use `sameSite: "strict"` on authentication cookies?
+- Answer: `sameSite: "strict"` ensures the browser never attaches the authentication cookie to cross-site requests, mitigating Cross-Site Request Forgery (CSRF) attacks.
+
+Q11: How does the application prevent unauthenticated users from generating questions?
+- Answer: The `/api/interview/generate-questions` route is protected by `isAuth` middleware, which verifies the JWT cookie before passing execution to the controller.
+
+Q12: What is the purpose of `.dockerignore`?
+- Answer: It prevents local `node_modules`, `.env` files, `.git` history, and `.pem` SSH keys from being copied into the Docker build context, keeping image size small and secrets safe.
+
+Q13: How does the browser SpeechSynthesis know which voice font to use?
+- Answer: `Step2Interview.jsx` queries `window.speechSynthesis.getVoices()` and filters for known natural voices (e.g. "Zira", "Samantha", "David") with a fallback to the first available voice.
+
+Q14: Why do you set `utterance.rate = 0.92` in SpeechSynthesis?
+- Answer: Default speech synthesis rate ($1.0$) sounds robotic. Slowing the rate slightly to $0.92$ creates a more natural, conversational cadence for interview questions.
+
+Q15: What happens to the uploaded resume file after parsing?
+- Answer: `fs.unlinkSync(filepath)` deletes the temporary uploaded PDF from local disk storage immediately after text extraction, preventing disk space accumulation.
+
+Q16: How are question difficulty levels structured?
+- Answer: Questions follow a fixed 5-question ladder: Questions 1 & 2 are `easy` (60s limit), Questions 3 & 4 are `medium` (90s limit), and Question 5 is `hard` (120s limit).
+
+Q17: Why did you use Redux Toolkit for state management?
+- Answer: To maintain a centralized, persistent store for user profile data, login state, and credit balances across different page routes.
+
+Q18: What data visualizer library is used for analytics?
+- Answer: Recharts renders an `AreaChart` showing score trends across questions Q1–Q5, and `react-circular-progressbar` displays the aggregate score ring.
+
+Q19: How is the PDF performance report generated?
+- Answer: Client-side using `jsPDF` and `jspdf-autotable`. It formats score cards, skill matrices, professional advice, and a detailed question-by-question table into an A4 PDF.
+
+Q20: Why is `express.json()` middleware required?
+- Answer: To parse incoming JSON request payloads in HTTP request bodies into `req.body`.
+
+21: What model is specified in OpenRouter requests?
+- Answer: `openai/gpt-4o-mini`, chosen for its fast response latency, low cost per token, and strong adherence to JSON output schemas.
+
+Q22: How does `isAuth` middleware attach user identity to requests?
+- Answer: After verifying the JWT token with `jwt.verify()`, it extracts `verifyToken.userId` and assigns it to `req.userId`, making it accessible to subsequent controllers.
+
+Q23: How do you handle CORS in development?
+- Answer: Express uses `cors({ origin: "http://localhost:5173", credentials: true })` to allow credentials (cookies) to be passed from the Vite dev server.
+
+Q24: What happens if a user submits an empty answer string?
+- Answer: If `!answer`, `submitAnswer` immediately assigns `score = 0`, sets feedback to "You did not submit an answer", saves the interview, and returns without calling the AI API.
+
+Q25: What is the main architectural bottleneck under load?
+- Answer: Synchronous external HTTP calls to OpenRouter API during question generation and answer evaluation.
+
+
+-------------------------------------------------------------------------------
+SECTION 16 — THINGS I MUST NOT CLAIM
+-------------------------------------------------------------------------------
+To remain technically honest in interviews, DO NOT claim:
+1. Do NOT claim "Real-time WebSocket streaming" — Communication uses standard HTTP REST endpoints.
+2. Do NOT claim "Microservices architecture" — The backend is a clean Express.js monolith.
+3. Do NOT claim "Custom-trained AI model" — The project uses OpenRouter API (`openai/gpt-4o-mini`).
+4. Do NOT claim "In-browser remote code execution sandbox" — Candidates submit spoken/text answers, not compiled code binaries.
+5. Do NOT claim "Tested at 100,000 concurrent users" — The application is architected for single-instance container deployment.
+
+
+-------------------------------------------------------------------------------
+SECTION 17 — RESUME BULLETS
+-------------------------------------------------------------------------------
+1. Architected a full-stack AI interview platform using React 18, Node.js/Express, and MongoDB, integrating OpenRouter (GPT-4o-Mini) to automate context-aware question generation and 3-dimensional answer scoring.
+2. Built a voice-guided interview session engine using browser Web Speech APIs (STT/TTS) and Framer Motion, synchronizing voice prompts with animated avatar state and auto-timer bounds.
+3. Implemented secure user authentication via Firebase Google OAuth and HTTP-only JWT cookies, along with Razorpay payment order processing backed by server-side HMAC SHA-256 signature verification.
+===============================================================================
